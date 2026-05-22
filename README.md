@@ -1,1 +1,2 @@
 # seismic-activity-dashboard
+docs
