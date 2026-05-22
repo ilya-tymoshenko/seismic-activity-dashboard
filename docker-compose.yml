@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: earthquake-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-earthquakes}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-earthquakes}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrations:
+    build:
+      context: ./migrations
+    container_name: earthquake-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-earthquakes}?sslmode=disable
+      GOOSE_VERBOSE: "true"
+    volumes:
+      - ./migrations:/migrations:ro
+    command: ["-dir", "/migrations", "up"]
+
+  backend:
+    build:
+      context: ./backend
+    container_name: earthquake-backend
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      APP_PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-earthquakes}?sslmode=disable
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      USGS_MIN_MAGNITUDE: ${USGS_MIN_MAGNITUDE:-2.5}
+      USGS_HISTORY_DAYS: ${USGS_HISTORY_DAYS:-365}
+      USGS_HISTORY_CHUNK_DAYS: ${USGS_HISTORY_CHUNK_DAYS:-30}
+      USGS_SYNC_FEED: ${USGS_SYNC_FEED:-2.5_day}
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: earthquake-frontend
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+
+  metabase:
+    image: metabase/metabase:v0.50.29
+    container_name: earthquake-metabase
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    ports:
+      - "3001:3000"
+    volumes:
+      - metabase-data:/metabase-data
+
+volumes:
+  pgdata:
+  metabase-data:

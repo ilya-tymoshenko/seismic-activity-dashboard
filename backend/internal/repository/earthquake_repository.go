@@ -1,0 +1,599 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"earthquake-big-data/backend/internal/models"
+)
+
+const maxEarthquakeLimit = 5000
+
+type EarthquakeRepository struct {
+	db *sql.DB
+}
+
+func NewEarthquakeRepository(db *sql.DB) *EarthquakeRepository {
+	return &EarthquakeRepository{db: db}
+}
+
+func (r *EarthquakeRepository) UpsertUSGSFeature(ctx context.Context, feature models.USGSFeature) (bool, bool, error) {
+	if strings.TrimSpace(feature.ID) == "" {
+		return false, true, nil
+	}
+	if len(feature.Geometry.Coordinates) < 2 {
+		return false, true, nil
+	}
+
+	longitude := feature.Geometry.Coordinates[0]
+	latitude := feature.Geometry.Coordinates[1]
+	if longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90 {
+		return false, true, nil
+	}
+
+	var depth *float64
+	if len(feature.Geometry.Coordinates) >= 3 {
+		value := feature.Geometry.Coordinates[2]
+		depth = &value
+	}
+
+	rawJSON, err := json.Marshal(feature)
+	if err != nil {
+		return false, false, fmt.Errorf("marshal raw feature %s: %w", feature.ID, err)
+	}
+
+	eventTime := time.UnixMilli(feature.Properties.Time).UTC()
+	updatedTime := time.UnixMilli(feature.Properties.Updated).UTC()
+
+	const query = `
+INSERT INTO earthquakes (
+    id,
+    time,
+    updated,
+    latitude,
+    longitude,
+    depth,
+    magnitude,
+    mag_type,
+    place,
+    alert,
+    tsunami,
+    sig,
+    type,
+    source,
+    geom,
+    raw_json,
+    ingested_at
+)
+VALUES (
+    $1, $2, $3,
+    $4, $5, $6, $7,
+    $8, $9, $10,
+    $11, $12, $13,
+    'USGS',
+    ST_SetSRID(ST_MakePoint($5, $4), 4326),
+    $14::jsonb,
+    NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+    time = EXCLUDED.time,
+    updated = EXCLUDED.updated,
+    latitude = EXCLUDED.latitude,
+    longitude = EXCLUDED.longitude,
+    depth = EXCLUDED.depth,
+    magnitude = EXCLUDED.magnitude,
+    mag_type = EXCLUDED.mag_type,
+    place = EXCLUDED.place,
+    alert = EXCLUDED.alert,
+    tsunami = EXCLUDED.tsunami,
+    sig = EXCLUDED.sig,
+    type = EXCLUDED.type,
+    geom = EXCLUDED.geom,
+    raw_json = EXCLUDED.raw_json,
+    ingested_at = NOW()
+WHERE earthquakes.updated <= EXCLUDED.updated`
+
+	_, err = r.db.ExecContext(
+		ctx,
+		query,
+		feature.ID,
+		eventTime,
+		updatedTime,
+		latitude,
+		longitude,
+		depth,
+		feature.Properties.Mag,
+		feature.Properties.MagType,
+		feature.Properties.Place,
+		feature.Properties.Alert,
+		feature.Properties.Tsunami,
+		feature.Properties.Sig,
+		feature.Properties.Type,
+		string(rawJSON),
+	)
+	if err != nil {
+		return false, false, fmt.Errorf("upsert earthquake %s: %w", feature.ID, err)
+	}
+
+	return true, false, nil
+}
+
+func (r *EarthquakeRepository) ListEarthquakes(ctx context.Context, filters models.Filters) ([]models.Earthquake, error) {
+	limit := clampLimit(filters.Limit)
+	where, args := buildWhere(filters, true)
+	args = append(args, limit)
+	limitPlaceholder := placeholder(len(args))
+
+	query := `
+SELECT id, time, updated, latitude, longitude, depth, magnitude, mag_type, place, alert, tsunami, sig, type, source, ingested_at
+FROM earthquakes
+` + where + `
+ORDER BY time DESC
+LIMIT ` + limitPlaceholder
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]models.Earthquake, 0, limit)
+	for rows.Next() {
+		item, err := scanEarthquake(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (r *EarthquakeRepository) Stats(ctx context.Context, filters models.Filters) (models.StatsResponse, error) {
+	where, args := buildWhere(filters, true)
+	query := `
+SELECT
+    COUNT(*) AS total_events,
+    MAX(magnitude) AS max_magnitude,
+    AVG(magnitude) AS avg_magnitude,
+    AVG(depth) AS avg_depth,
+    COUNT(*) FILTER (WHERE tsunami = 1) AS tsunami_events
+FROM earthquakes
+` + where
+
+	var total, tsunami int64
+	var maxMag, avgMag, avgDepth sql.NullFloat64
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total, &maxMag, &avgMag, &avgDepth, &tsunami); err != nil {
+		return models.StatsResponse{}, err
+	}
+
+	last24, err := r.countSince(ctx, filters, 24*time.Hour)
+	if err != nil {
+		return models.StatsResponse{}, err
+	}
+	last7d, err := r.countSince(ctx, filters, 7*24*time.Hour)
+	if err != nil {
+		return models.StatsResponse{}, err
+	}
+	strongest, err := r.strongestEvent(ctx, filters)
+	if err != nil {
+		return models.StatsResponse{}, err
+	}
+
+	return models.StatsResponse{
+		TotalEvents:    total,
+		MaxMagnitude:   nullFloatPtr(maxMag),
+		AvgMagnitude:   nullFloatPtr(avgMag),
+		AvgDepth:       nullFloatPtr(avgDepth),
+		TsunamiEvents:  tsunami,
+		EventsLast24h:  last24,
+		EventsLast7d:   last7d,
+		StrongestEvent: strongest,
+	}, nil
+}
+
+func (r *EarthquakeRepository) Analytics(ctx context.Context, filters models.Filters) (models.AnalyticsResponse, error) {
+	where, args := buildWhere(filters, false)
+
+	eventsByDay, err := r.eventsByDay(ctx, where, args)
+	if err != nil {
+		return models.AnalyticsResponse{}, err
+	}
+	magDistribution, err := r.magnitudeDistribution(ctx, where, args)
+	if err != nil {
+		return models.AnalyticsResponse{}, err
+	}
+	depthDistribution, err := r.depthDistribution(ctx, where, args)
+	if err != nil {
+		return models.AnalyticsResponse{}, err
+	}
+	topPlaces, err := r.topPlaces(ctx, where, args)
+	if err != nil {
+		return models.AnalyticsResponse{}, err
+	}
+
+	return models.AnalyticsResponse{
+		EventsByDay:           eventsByDay,
+		MagnitudeDistribution: magDistribution,
+		DepthDistribution:     depthDistribution,
+		TopPlaces:             topPlaces,
+	}, nil
+}
+
+func (r *EarthquakeRepository) Clusters(ctx context.Context, minMagnitude float64, eps float64, minPoints int, dateFrom *time.Time, dateTo *time.Time) ([]models.Cluster, error) {
+	args := []any{minMagnitude}
+	whereParts := []string{"magnitude >= $1"}
+	if dateFrom != nil {
+		args = append(args, *dateFrom)
+		whereParts = append(whereParts, "time >= "+placeholder(len(args)))
+	}
+	if dateTo != nil {
+		args = append(args, *dateTo)
+		whereParts = append(whereParts, "time <= "+placeholder(len(args)))
+	}
+	args = append(args, eps)
+	epsPlaceholder := placeholder(len(args))
+	args = append(args, minPoints)
+	minPointsPlaceholder := placeholder(len(args))
+
+	query := fmt.Sprintf(`
+WITH filtered AS (
+  SELECT
+    id,
+    magnitude,
+    depth,
+    geom
+  FROM earthquakes
+  WHERE %s
+),
+clustered_events AS (
+  SELECT
+    id,
+    magnitude,
+    depth,
+    geom,
+    ST_ClusterDBSCAN(geom, eps := %s, minpoints := %s) OVER () AS cluster_id
+  FROM filtered
+),
+valid_clusters AS (
+  SELECT
+    cluster_id,
+    COUNT(*) AS event_count,
+    AVG(magnitude) AS avg_magnitude,
+    MAX(magnitude) AS max_magnitude,
+    AVG(depth) AS avg_depth,
+    ST_Centroid(ST_Collect(geom)) AS center_geom
+  FROM clustered_events
+  WHERE cluster_id IS NOT NULL
+  GROUP BY cluster_id
+)
+SELECT
+  cluster_id,
+  event_count,
+  avg_magnitude,
+  max_magnitude,
+  avg_depth,
+  ST_Y(center_geom) AS latitude,
+  ST_X(center_geom) AS longitude
+FROM valid_clusters
+ORDER BY event_count DESC
+LIMIT 100`, strings.Join(whereParts, " AND "), epsPlaceholder, minPointsPlaceholder)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	clusters := make([]models.Cluster, 0)
+	for rows.Next() {
+		var cluster models.Cluster
+		var avgMag, maxMag, avgDepth sql.NullFloat64
+		if err := rows.Scan(&cluster.ClusterID, &cluster.EventCount, &avgMag, &maxMag, &avgDepth, &cluster.Latitude, &cluster.Longitude); err != nil {
+			return nil, err
+		}
+		cluster.AvgMagnitude = nullFloatPtr(avgMag)
+		cluster.MaxMagnitude = nullFloatPtr(maxMag)
+		cluster.AvgDepth = nullFloatPtr(avgDepth)
+		clusters = append(clusters, cluster)
+	}
+	return clusters, rows.Err()
+}
+
+func (r *EarthquakeRepository) countSince(ctx context.Context, filters models.Filters, duration time.Duration) (int64, error) {
+	where, args := buildWhere(filters, true)
+	args = append(args, time.Now().UTC().Add(-duration))
+	query := `SELECT COUNT(*) FROM earthquakes ` + where + ` AND time >= ` + placeholder(len(args))
+
+	var count int64
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
+func (r *EarthquakeRepository) strongestEvent(ctx context.Context, filters models.Filters) (*models.StrongestEvent, error) {
+	where, args := buildWhere(filters, true)
+	query := `
+SELECT id, time, magnitude, place
+FROM earthquakes
+` + where + `
+ORDER BY magnitude DESC NULLS LAST, time DESC
+LIMIT 1`
+
+	var event models.StrongestEvent
+	var eventTime sql.NullTime
+	var magnitude sql.NullFloat64
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(&event.ID, &eventTime, &magnitude, &event.Place)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if eventTime.Valid {
+		event.Time = &eventTime.Time
+	}
+	event.Magnitude = nullFloatPtr(magnitude)
+	return &event, nil
+}
+
+func (r *EarthquakeRepository) eventsByDay(ctx context.Context, where string, args []any) ([]models.DailyActivity, error) {
+	query := `
+SELECT DATE(time)::text AS date, COUNT(*) AS count, AVG(magnitude) AS avg_magnitude
+FROM earthquakes
+` + where + `
+GROUP BY DATE(time)
+ORDER BY DATE(time) ASC
+LIMIT 366`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]models.DailyActivity, 0)
+	for rows.Next() {
+		var item models.DailyActivity
+		var avg sql.NullFloat64
+		if err := rows.Scan(&item.Date, &item.Count, &avg); err != nil {
+			return nil, err
+		}
+		item.AvgMagnitude = nullFloatPtr(avg)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (r *EarthquakeRepository) magnitudeDistribution(ctx context.Context, where string, args []any) ([]models.CategoryCount, error) {
+	query := `
+SELECT
+  CASE
+    WHEN magnitude IS NULL THEN 'Unknown'
+    WHEN magnitude < 3 THEN 'Minor'
+    WHEN magnitude >= 3 AND magnitude < 5 THEN 'Light'
+    WHEN magnitude >= 5 AND magnitude < 7 THEN 'Moderate'
+    ELSE 'Severe'
+  END AS category,
+  COUNT(*) AS count
+FROM earthquakes
+` + where + `
+GROUP BY category
+ORDER BY
+  CASE category
+    WHEN 'Minor' THEN 1
+    WHEN 'Light' THEN 2
+    WHEN 'Moderate' THEN 3
+    WHEN 'Severe' THEN 4
+    ELSE 5
+  END`
+
+	return queryCategoryCounts(ctx, r.db, query, args)
+}
+
+func (r *EarthquakeRepository) depthDistribution(ctx context.Context, where string, args []any) ([]models.CategoryCount, error) {
+	query := `
+SELECT
+  CASE
+    WHEN depth IS NULL THEN 'Unknown'
+    WHEN depth < 70 THEN 'Shallow'
+    WHEN depth >= 70 AND depth < 300 THEN 'Intermediate'
+    ELSE 'Deep'
+  END AS category,
+  COUNT(*) AS count
+FROM earthquakes
+` + where + `
+GROUP BY category
+ORDER BY
+  CASE category
+    WHEN 'Shallow' THEN 1
+    WHEN 'Intermediate' THEN 2
+    WHEN 'Deep' THEN 3
+    ELSE 4
+  END`
+
+	return queryCategoryCounts(ctx, r.db, query, args)
+}
+
+func (r *EarthquakeRepository) topPlaces(ctx context.Context, where string, args []any) ([]models.TopPlace, error) {
+	query := `
+SELECT COALESCE(NULLIF(place, ''), 'Unknown') AS place, COUNT(*) AS count, MAX(magnitude) AS max_magnitude
+FROM earthquakes
+` + where + `
+GROUP BY COALESCE(NULLIF(place, ''), 'Unknown')
+ORDER BY count DESC
+LIMIT 10`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]models.TopPlace, 0, 10)
+	for rows.Next() {
+		var item models.TopPlace
+		var maxMag sql.NullFloat64
+		if err := rows.Scan(&item.Place, &item.Count, &maxMag); err != nil {
+			return nil, err
+		}
+		item.MaxMagnitude = nullFloatPtr(maxMag)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func queryCategoryCounts(ctx context.Context, db *sql.DB, query string, args []any) ([]models.CategoryCount, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]models.CategoryCount, 0)
+	for rows.Next() {
+		var item models.CategoryCount
+		if err := rows.Scan(&item.Category, &item.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+type earthquakeScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanEarthquake(scanner earthquakeScanner) (models.Earthquake, error) {
+	var item models.Earthquake
+	var depth, magnitude sql.NullFloat64
+	var magType, alert, source sql.NullString
+	var ingested sql.NullTime
+
+	err := scanner.Scan(
+		&item.ID,
+		&item.Time,
+		&item.Updated,
+		&item.Latitude,
+		&item.Longitude,
+		&depth,
+		&magnitude,
+		&magType,
+		&item.Place,
+		&alert,
+		&item.Tsunami,
+		&item.Sig,
+		&item.Type,
+		&source,
+		&ingested,
+	)
+	if err != nil {
+		return models.Earthquake{}, err
+	}
+
+	item.Depth = nullFloatPtr(depth)
+	item.Magnitude = nullFloatPtr(magnitude)
+	item.MagType = nullStringPtr(magType)
+	item.Alert = nullStringPtr(alert)
+	if source.Valid {
+		item.Source = source.String
+	}
+	if ingested.Valid {
+		item.Ingested = &ingested.Time
+	}
+	return item, nil
+}
+
+func buildWhere(filters models.Filters, includeBBox bool) (string, []any) {
+	args := make([]any, 0)
+	parts := []string{"1=1"}
+
+	if filters.DateFrom != nil {
+		args = append(args, *filters.DateFrom)
+		parts = append(parts, "time >= "+placeholder(len(args)))
+	}
+	if filters.DateTo != nil {
+		args = append(args, *filters.DateTo)
+		parts = append(parts, "time <= "+placeholder(len(args)))
+	}
+	if filters.MinMagnitude != nil {
+		args = append(args, *filters.MinMagnitude)
+		parts = append(parts, "magnitude >= "+placeholder(len(args)))
+	}
+	if filters.MaxMagnitude != nil {
+		args = append(args, *filters.MaxMagnitude)
+		parts = append(parts, "magnitude <= "+placeholder(len(args)))
+	}
+	if filters.MinDepth != nil {
+		args = append(args, *filters.MinDepth)
+		parts = append(parts, "depth >= "+placeholder(len(args)))
+	}
+	if filters.MaxDepth != nil {
+		args = append(args, *filters.MaxDepth)
+		parts = append(parts, "depth <= "+placeholder(len(args)))
+	}
+	if filters.Tsunami != nil {
+		args = append(args, *filters.Tsunami)
+		parts = append(parts, "tsunami = "+placeholder(len(args)))
+	}
+	if filters.Alert != "" {
+		args = append(args, filters.Alert)
+		parts = append(parts, "alert = "+placeholder(len(args)))
+	}
+	if filters.Type != "" {
+		args = append(args, filters.Type)
+		parts = append(parts, "type = "+placeholder(len(args)))
+	}
+	if includeBBox && filters.BBox != nil {
+		bbox := filters.BBox
+		args = append(args, bbox.MinLon, bbox.MinLat, bbox.MaxLon, bbox.MaxLat)
+		parts = append(
+			parts,
+			fmt.Sprintf(
+				"ST_Intersects(geom, ST_MakeEnvelope(%s, %s, %s, %s, 4326))",
+				placeholder(len(args)-3),
+				placeholder(len(args)-2),
+				placeholder(len(args)-1),
+				placeholder(len(args)),
+			),
+		)
+	}
+
+	return "WHERE " + strings.Join(parts, " AND "), args
+}
+
+func ClampLimit(limit int) int {
+	return clampLimit(limit)
+}
+
+func clampLimit(limit int) int {
+	if limit <= 0 {
+		return 1000
+	}
+	if limit > maxEarthquakeLimit {
+		return maxEarthquakeLimit
+	}
+	return limit
+}
+
+func placeholder(index int) string {
+	return "$" + strconv.Itoa(index)
+}
+
+func nullFloatPtr(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Float64
+}
+
+func nullStringPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
+}
