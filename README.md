@@ -30,6 +30,13 @@ curl -X POST "http://localhost:8080/api/import/history?days=365&minMagnitude=2.5
 - Metabase: http://localhost:3001
 - PostgreSQL: localhost:5432
 
+## Metabase login
+Metabase is bootstrapped automatically on an empty volume.
+It creates the admin user, the PostgreSQL connection, and the `Earthquake BI Overview` dashboard.
+
+- Email: admin@example.com
+- Password: admin12345
+
 ## Metabase connection
 - Host: postgres
 - Port: 5432

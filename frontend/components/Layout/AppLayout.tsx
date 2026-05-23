@@ -1,4 +1,4 @@
-import { Activity, Database, RefreshCw } from "lucide-react";
+import { Activity, BarChart3, Database, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 
 type Props = {
@@ -11,6 +11,8 @@ type Props = {
 };
 
 export default function AppLayout({ children, busy, status, error, onSync, onImport }: Props) {
+  const metabaseUrl = process.env.NEXT_PUBLIC_METABASE_URL || "http://localhost:3001";
+
   return (
     <main className="min-h-screen bg-canvas">
       <header className="border-b border-slate-200 bg-white/95 backdrop-blur">
@@ -47,6 +49,16 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
               <Database size={17} />
               Import History
             </button>
+            <a
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              href={metabaseUrl}
+              rel="noreferrer"
+              target="_blank"
+              title="Open Metabase BI"
+            >
+              <BarChart3 size={17} />
+              Open Metabase
+            </a>
             <div className="min-w-[220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
               {busy ? "Loading data..." : error ? <span className="text-coral">{error}</span> : status || "Ready"}
             </div>

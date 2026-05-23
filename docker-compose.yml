@@ -52,11 +52,15 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        NEXT_PUBLIC_METABASE_URL: ${NEXT_PUBLIC_METABASE_URL:-http://localhost:3001}
     container_name: earthquake-frontend
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      NEXT_PUBLIC_METABASE_URL: ${NEXT_PUBLIC_METABASE_URL:-http://localhost:3001}
     ports:
       - "3000:3000"
 
@@ -72,6 +76,32 @@ services:
       - "3001:3000"
     volumes:
       - metabase-data:/metabase-data
+
+  metabase-setup:
+    image: node:20.18-alpine
+    container_name: earthquake-metabase-setup
+    depends_on:
+      metabase:
+        condition: service_started
+      migrations:
+        condition: service_completed_successfully
+    working_dir: /setup
+    environment:
+      MB_URL: http://metabase:3000
+      MB_ADMIN_EMAIL: ${MB_ADMIN_EMAIL:-admin@example.com}
+      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-admin12345}
+      MB_ADMIN_FIRST_NAME: ${MB_ADMIN_FIRST_NAME:-Demo}
+      MB_ADMIN_LAST_NAME: ${MB_ADMIN_LAST_NAME:-Admin}
+      MB_APP_DB_NAME: ${MB_APP_DB_NAME:-Earthquakes}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-earthquakes}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./metabase/setup:/setup:ro
+    command: ["node", "/setup/setup.js"]
+    restart: "no"
 
 volumes:
   pgdata:
