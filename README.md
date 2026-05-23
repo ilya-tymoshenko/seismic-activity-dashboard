@@ -8,6 +8,11 @@ Go/Gin, PostgreSQL 16 + PostGIS, Goose migrations, Next.js Pages Router, Tailwin
 docker compose up --build
 ```
 
+Frontend watch mode:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.watch.yml watch frontend
+```
+
 Backend check:
 ```bash
 curl http://localhost:8080/api/health

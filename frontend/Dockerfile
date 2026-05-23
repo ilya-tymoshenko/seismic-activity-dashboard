@@ -4,6 +4,20 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+FROM deps AS dev
+
+WORKDIR /app
+ARG NEXT_PUBLIC_API_URL=http://localhost:8080
+ARG NEXT_PUBLIC_METABASE_URL=http://localhost:3001
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_METABASE_URL=$NEXT_PUBLIC_METABASE_URL
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
+COPY . .
+
+EXPOSE 3000
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+
 FROM node:20.18-alpine AS builder
 
 WORKDIR /app
