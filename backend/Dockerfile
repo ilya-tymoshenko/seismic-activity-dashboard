@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/import-history ./cmd/import-histor
 FROM alpine:3.20
 
 WORKDIR /app
-RUN adduser -D -H appuser
+RUN apk add --no-cache ca-certificates && adduser -D -H appuser
 COPY --from=builder /out/api /app/api
 COPY --from=builder /out/import-history /app/import-history
 

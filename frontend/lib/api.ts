@@ -77,11 +77,24 @@ export function fetchAnalytics(filters: Filters) {
   return request<AnalyticsResponse>(`/api/analytics${buildQuery(filters)}`);
 }
 
-export function fetchClusters(filters: Filters) {
+export function fetchClusters(filters: Filters, bounds?: Bounds) {
   const params = new URLSearchParams();
   add(params, "dateFrom", filters.dateFrom);
   add(params, "dateTo", filters.dateTo);
-  add(params, "minMagnitude", filters.minMagnitude || "4.5");
+  if (filters.minMagnitude || !filters.maxMagnitude) {
+    add(params, "minMagnitude", filters.minMagnitude || "4.5");
+  }
+  add(params, "maxMagnitude", filters.maxMagnitude);
+  add(params, "minDepth", filters.minDepth);
+  add(params, "maxDepth", filters.maxDepth);
+  add(params, "alert", filters.alert);
+  add(params, "type", filters.type);
+  if (filters.tsunamiOnly) {
+    params.set("tsunami", "1");
+  }
+  if (bounds) {
+    params.set("bbox", `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`);
+  }
   params.set("eps", "2.0");
   params.set("minPoints", "10");
   return request<ClustersResponse>(`/api/clusters?${params.toString()}`);

@@ -9,11 +9,15 @@ import (
 )
 
 func (h *Handler) Clusters(c *gin.Context) {
-	minMagnitude, err := parseFloatDefault(c.Query("minMagnitude"), 4.5)
-	if err != nil {
-		abortBadRequest(c, "minMagnitude must be a number")
+	filters, ok := parseFilters(c)
+	if !ok {
 		return
 	}
+	if filters.MinMagnitude == nil && filters.MaxMagnitude == nil {
+		defaultMinMagnitude := 4.5
+		filters.MinMagnitude = &defaultMinMagnitude
+	}
+
 	eps, err := parseFloatDefault(c.Query("eps"), 2.0)
 	if err != nil {
 		abortBadRequest(c, "eps must be a number")
@@ -24,16 +28,8 @@ func (h *Handler) Clusters(c *gin.Context) {
 		abortBadRequest(c, "minPoints must be an integer")
 		return
 	}
-	dateFrom, ok := parseDate(c.Query("dateFrom"), false, c)
-	if !ok {
-		return
-	}
-	dateTo, ok := parseDate(c.Query("dateTo"), true, c)
-	if !ok {
-		return
-	}
 
-	clusters, err := h.repo.Clusters(c.Request.Context(), minMagnitude, eps, minPoints, dateFrom, dateTo)
+	clusters, err := h.repo.Clusters(c.Request.Context(), filters, eps, minPoints)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

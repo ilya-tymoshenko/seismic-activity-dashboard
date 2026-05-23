@@ -224,17 +224,8 @@ func (r *EarthquakeRepository) Analytics(ctx context.Context, filters models.Fil
 	}, nil
 }
 
-func (r *EarthquakeRepository) Clusters(ctx context.Context, minMagnitude float64, eps float64, minPoints int, dateFrom *time.Time, dateTo *time.Time) ([]models.Cluster, error) {
-	args := []any{minMagnitude}
-	whereParts := []string{"magnitude >= $1"}
-	if dateFrom != nil {
-		args = append(args, *dateFrom)
-		whereParts = append(whereParts, "time >= "+placeholder(len(args)))
-	}
-	if dateTo != nil {
-		args = append(args, *dateTo)
-		whereParts = append(whereParts, "time <= "+placeholder(len(args)))
-	}
+func (r *EarthquakeRepository) Clusters(ctx context.Context, filters models.Filters, eps float64, minPoints int) ([]models.Cluster, error) {
+	where, args := buildWhere(filters, true)
 	args = append(args, eps)
 	epsPlaceholder := placeholder(len(args))
 	args = append(args, minPoints)
@@ -248,7 +239,7 @@ WITH filtered AS (
     depth,
     geom
   FROM earthquakes
-  WHERE %s
+  %s
 ),
 clustered_events AS (
   SELECT
@@ -281,7 +272,7 @@ SELECT
   ST_X(center_geom) AS longitude
 FROM valid_clusters
 ORDER BY event_count DESC
-LIMIT 100`, strings.Join(whereParts, " AND "), epsPlaceholder, minPointsPlaceholder)
+LIMIT 100`, where, epsPlaceholder, minPointsPlaceholder)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -342,12 +333,21 @@ LIMIT 1`
 
 func (r *EarthquakeRepository) eventsByDay(ctx context.Context, where string, args []any) ([]models.DailyActivity, error) {
 	query := `
-SELECT DATE(time)::text AS date, COUNT(*) AS count, AVG(magnitude) AS avg_magnitude
-FROM earthquakes
-` + where + `
-GROUP BY DATE(time)
-ORDER BY DATE(time) ASC
-LIMIT 366`
+WITH daily AS (
+  SELECT DATE(time) AS eq_date, COUNT(*) AS count, AVG(magnitude) AS avg_magnitude
+  FROM earthquakes
+  ` + where + `
+  GROUP BY DATE(time)
+),
+latest AS (
+  SELECT eq_date, count, avg_magnitude
+  FROM daily
+  ORDER BY eq_date DESC
+  LIMIT 366
+)
+SELECT eq_date::text AS date, count, avg_magnitude
+FROM latest
+ORDER BY eq_date ASC`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -370,50 +370,56 @@ LIMIT 366`
 
 func (r *EarthquakeRepository) magnitudeDistribution(ctx context.Context, where string, args []any) ([]models.CategoryCount, error) {
 	query := `
-SELECT
-  CASE
-    WHEN magnitude IS NULL THEN 'Unknown'
-    WHEN magnitude < 3 THEN 'Minor'
-    WHEN magnitude >= 3 AND magnitude < 5 THEN 'Light'
-    WHEN magnitude >= 5 AND magnitude < 7 THEN 'Moderate'
-    ELSE 'Severe'
-  END AS category,
-  COUNT(*) AS count
-FROM earthquakes
-` + where + `
-GROUP BY category
-ORDER BY
-  CASE category
-    WHEN 'Minor' THEN 1
-    WHEN 'Light' THEN 2
-    WHEN 'Moderate' THEN 3
-    WHEN 'Severe' THEN 4
-    ELSE 5
-  END`
+WITH categorized AS (
+  SELECT
+    CASE
+      WHEN magnitude IS NULL THEN 'Unknown'
+      WHEN magnitude < 3 THEN 'Minor'
+      WHEN magnitude >= 3 AND magnitude < 5 THEN 'Light'
+      WHEN magnitude >= 5 AND magnitude < 7 THEN 'Moderate'
+      ELSE 'Severe'
+    END AS category,
+    CASE
+      WHEN magnitude IS NULL THEN 5
+      WHEN magnitude < 3 THEN 1
+      WHEN magnitude >= 3 AND magnitude < 5 THEN 2
+      WHEN magnitude >= 5 AND magnitude < 7 THEN 3
+      ELSE 4
+    END AS sort_order
+  FROM earthquakes
+  ` + where + `
+)
+SELECT category, COUNT(*) AS count
+FROM categorized
+GROUP BY category, sort_order
+ORDER BY sort_order`
 
 	return queryCategoryCounts(ctx, r.db, query, args)
 }
 
 func (r *EarthquakeRepository) depthDistribution(ctx context.Context, where string, args []any) ([]models.CategoryCount, error) {
 	query := `
-SELECT
-  CASE
-    WHEN depth IS NULL THEN 'Unknown'
-    WHEN depth < 70 THEN 'Shallow'
-    WHEN depth >= 70 AND depth < 300 THEN 'Intermediate'
-    ELSE 'Deep'
-  END AS category,
-  COUNT(*) AS count
-FROM earthquakes
-` + where + `
-GROUP BY category
-ORDER BY
-  CASE category
-    WHEN 'Shallow' THEN 1
-    WHEN 'Intermediate' THEN 2
-    WHEN 'Deep' THEN 3
-    ELSE 4
-  END`
+WITH categorized AS (
+  SELECT
+    CASE
+      WHEN depth IS NULL THEN 'Unknown'
+      WHEN depth < 70 THEN 'Shallow'
+      WHEN depth >= 70 AND depth < 300 THEN 'Intermediate'
+      ELSE 'Deep'
+    END AS category,
+    CASE
+      WHEN depth IS NULL THEN 4
+      WHEN depth < 70 THEN 1
+      WHEN depth >= 70 AND depth < 300 THEN 2
+      ELSE 3
+    END AS sort_order
+  FROM earthquakes
+  ` + where + `
+)
+SELECT category, COUNT(*) AS count
+FROM categorized
+GROUP BY category, sort_order
+ORDER BY sort_order`
 
 	return queryCategoryCounts(ctx, r.db, query, args)
 }

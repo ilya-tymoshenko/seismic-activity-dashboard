@@ -1,5 +1,5 @@
 import Head from "next/head";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChartsPanel from "../components/Dashboard/ChartsPanel";
 import EarthquakeTable from "../components/Dashboard/EarthquakeTable";
 import FiltersPanel from "../components/Dashboard/FiltersPanel";
@@ -34,6 +34,7 @@ export default function HomePage() {
   const [mapBusy, setMapBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Dashboard ready. Sync or import USGS data to populate the database.");
+  const clusterRequestSeq = useRef(0);
 
   const showClusters = Boolean(appliedFilters.showClusters);
 
@@ -69,23 +70,31 @@ export default function HomePage() {
     }
   }, []);
 
-  const loadClusters = useCallback(async (filters: Filters) => {
+  const loadClusters = useCallback(async (filters: Filters, nextBounds?: Bounds) => {
+    const requestId = ++clusterRequestSeq.current;
     if (!filters.showClusters) {
       setClusters([]);
       return;
     }
     try {
-      const response = await fetchClusters(filters);
-      setClusters(response.data);
+      const response = await fetchClusters(filters, nextBounds);
+      if (requestId === clusterRequestSeq.current) {
+        setClusters(response.data);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load clusters");
+      if (requestId === clusterRequestSeq.current) {
+        setError(err instanceof Error ? err.message : "Failed to load clusters");
+      }
     }
   }, []);
 
   useEffect(() => {
     void loadSummary(appliedFilters);
-    void loadClusters(appliedFilters);
-  }, [appliedFilters, loadClusters, loadSummary]);
+  }, [appliedFilters, loadSummary]);
+
+  useEffect(() => {
+    void loadClusters(appliedFilters, bounds);
+  }, [appliedFilters, bounds, loadClusters]);
 
   useEffect(() => {
     void loadEarthquakes(appliedFilters, bounds);
@@ -119,7 +128,7 @@ export default function HomePage() {
     await Promise.all([
       loadSummary(appliedFilters),
       loadEarthquakes(appliedFilters, bounds),
-      loadClusters(appliedFilters)
+      loadClusters(appliedFilters, bounds)
     ]);
   }, [appliedFilters, bounds, loadClusters, loadEarthquakes, loadSummary]);
 
