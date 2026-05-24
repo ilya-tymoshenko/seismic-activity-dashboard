@@ -16,7 +16,7 @@ type Props = {
 
 export default function EarthquakeMap({ earthquakes, clusters, showClusters, onBoundsChange }: Props) {
   return (
-    <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[760px]">
+    <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[100%]">
       <MapLegend showClusters={showClusters} />
       <MapContainer
         center={[20, 0]}
