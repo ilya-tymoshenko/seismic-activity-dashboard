@@ -32,7 +32,7 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
           </div>
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
               <Button
                 size="lg"
                 disabled={busy}
