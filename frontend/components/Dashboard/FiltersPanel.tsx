@@ -1,6 +1,13 @@
 import { Filter, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Filters } from "../../lib/types";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 
 type Props = {
   filters: Filters;
@@ -15,85 +22,117 @@ export default function FiltersPanel({ filters, onChange, onApply, onReset }: Pr
   };
 
   return (
-    <aside className="rounded-lg border border-slate-200 bg-panel p-4 shadow-panel">
-      <div className="mb-4 flex items-center justify-between">
+    <Card>
+      <CardHeader className="pb-0">
         <div className="flex items-center gap-2">
-          <SlidersHorizontal size={18} className="text-ocean" />
-          <h2 className="text-base font-bold text-ink">Filters</h2>
+          <SlidersHorizontal size={18} className="text-primary" />
+          <CardTitle>Filters</CardTitle>
         </div>
-        <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">bbox aware</span>
-      </div>
+        <span className="rounded-full bg-secondary px-2 py-1 text-xs font-medium text-muted-foreground">bbox aware</span>
+      </CardHeader>
 
-      <div className="space-y-3">
+      <CardContent className="space-y-4">
         <Field label="Date from">
-          <input className="input" type="date" value={filters.dateFrom || ""} onChange={(event) => update("dateFrom", event.target.value)} />
+          <Input type="date" value={filters.dateFrom || ""} onChange={(event) => update("dateFrom", event.target.value)} />
         </Field>
         <Field label="Date to">
-          <input className="input" type="date" value={filters.dateTo || ""} onChange={(event) => update("dateTo", event.target.value)} />
+          <Input type="date" value={filters.dateTo || ""} onChange={(event) => update("dateTo", event.target.value)} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Min mag">
-            <input className="input" min="0" step="0.1" type="number" value={filters.minMagnitude || ""} onChange={(event) => update("minMagnitude", event.target.value)} />
+            <Input min="0" step="0.1" type="number" value={filters.minMagnitude || ""} onChange={(event) => update("minMagnitude", event.target.value)} />
           </Field>
           <Field label="Max mag">
-            <input className="input" min="0" step="0.1" type="number" value={filters.maxMagnitude || ""} onChange={(event) => update("maxMagnitude", event.target.value)} />
+            <Input min="0" step="0.1" type="number" value={filters.maxMagnitude || ""} onChange={(event) => update("maxMagnitude", event.target.value)} />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Min depth">
-            <input className="input" step="1" type="number" value={filters.minDepth || ""} onChange={(event) => update("minDepth", event.target.value)} />
+            <Input step="1" type="number" value={filters.minDepth || ""} onChange={(event) => update("minDepth", event.target.value)} />
           </Field>
           <Field label="Max depth">
-            <input className="input" step="1" type="number" value={filters.maxDepth || ""} onChange={(event) => update("maxDepth", event.target.value)} />
+            <Input step="1" type="number" value={filters.maxDepth || ""} onChange={(event) => update("maxDepth", event.target.value)} />
           </Field>
         </div>
         <Field label="Alert">
-          <select className="input" value={filters.alert || ""} onChange={(event) => update("alert", event.target.value)}>
-            <option value="">All alerts</option>
-            <option value="green">Green</option>
-            <option value="yellow">Yellow</option>
-            <option value="orange">Orange</option>
-            <option value="red">Red</option>
-          </select>
+          <Select value={filters.alert || "all"} onValueChange={(value) => update("alert", value === "all" ? "" : value ?? "")}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectItem value="all">All alerts</SelectItem>
+              <SelectItem value="green">Green</SelectItem>
+              <SelectItem value="yellow">Yellow</SelectItem>
+              <SelectItem value="orange">Orange</SelectItem>
+              <SelectItem value="red">Red</SelectItem>
+            </SelectContent>
+          </Select>
         </Field>
         <Field label="Limit">
-          <select className="input" value={filters.limit || "1000"} onChange={(event) => update("limit", event.target.value)}>
-            <option value="500">500</option>
-            <option value="1000">1000</option>
-            <option value="2500">2500</option>
-            <option value="5000">5000</option>
-          </select>
+          <Select value={filters.limit || "1000"} onValueChange={(value) => update("limit", value ?? "1000")}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectItem value="500">500</SelectItem>
+              <SelectItem value="1000">1,000</SelectItem>
+              <SelectItem value="2500">2,500</SelectItem>
+              <SelectItem value="5000">5,000</SelectItem>
+            </SelectContent>
+          </Select>
         </Field>
 
-        <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-          <span>Tsunami only</span>
-          <input checked={Boolean(filters.tsunamiOnly)} className="h-4 w-4 accent-coral" type="checkbox" onChange={(event) => update("tsunamiOnly", event.target.checked)} />
-        </label>
-        <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-          <span>Analytical clusters</span>
-          <input checked={Boolean(filters.showClusters)} className="h-4 w-4 accent-ocean" type="checkbox" onChange={(event) => update("showClusters", event.target.checked)} />
-        </label>
+        <Separator />
+
+        <ToggleRow id="tsunami-only-switch" label="Tsunami only">
+          <Switch
+            id="tsunami-only-switch"
+            aria-labelledby="tsunami-only-switch-label"
+            checked={Boolean(filters.tsunamiOnly)}
+            onCheckedChange={(checked) => update("tsunamiOnly", Boolean(checked))}
+          />
+        </ToggleRow>
+        <ToggleRow id="analytical-clusters-switch" label="Analytical clusters">
+          <Switch
+            id="analytical-clusters-switch"
+            aria-labelledby="analytical-clusters-switch-label"
+            checked={Boolean(filters.showClusters)}
+            onCheckedChange={(checked) => update("showClusters", Boolean(checked))}
+          />
+        </ToggleRow>
 
         <div className="grid grid-cols-2 gap-2 pt-2">
-          <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-ocean px-3 py-2 text-sm font-semibold text-white hover:bg-[#125b7f]" type="button" onClick={onApply}>
+          <Button type="button" onClick={onApply}>
             <Filter size={16} />
             Apply
-          </button>
-          <button className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" type="button" onClick={onReset}>
+          </Button>
+          <Button type="button" variant="outline" onClick={onReset}>
             <RotateCcw size={16} />
             Reset
-          </button>
+          </Button>
         </div>
-      </div>
-    </aside>
+      </CardContent>
+    </Card>
   );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block text-sm font-semibold text-slate-600">
-      <span className="mb-1 block">{label}</span>
+    <Label className="block space-y-1.5 text-sm">
+      <span className="block text-muted-foreground">{label}</span>
       {children}
-    </label>
+    </Label>
+  );
+}
+
+function ToggleRow({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <Label
+      htmlFor={id}
+      className="flex cursor-pointer items-center justify-between rounded-lg border bg-muted/30 px-3 py-2"
+    >
+      <span id={`${id}-label`} className="text-sm font-medium text-foreground">{label}</span>
+      {children}
+    </Label>
   );
 }

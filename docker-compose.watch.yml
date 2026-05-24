@@ -1,5 +1,6 @@
 services:
   frontend:
+    image: seismic-activity-dashboard-frontend-dev
     build:
       context: ./frontend
       target: dev

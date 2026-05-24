@@ -1,5 +1,9 @@
 import { Activity, BarChart3, Database, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 type Props = {
   children: ReactNode;
@@ -14,54 +18,59 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
   const metabaseUrl = process.env.NEXT_PUBLIC_METABASE_URL || "http://localhost:3001";
 
   return (
-    <main className="min-h-screen bg-canvas">
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-lg bg-coral text-white shadow-panel">
-                <Activity size={22} />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold tracking-normal text-ink md:text-2xl">Global Seismic Activity Analytics</h1>
-                <p className="text-sm text-slate-600">USGS Earthquake Catalog + PostGIS + Metabase</p>
-              </div>
+    <main className="min-h-screen bg-background">
+      <header className="border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85">
+        <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-4 py-4 md:px-6 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-destructive text-destructive-foreground shadow-sm">
+              <Activity size={22} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold tracking-normal text-foreground md:text-2xl">Global Seismic Activity Analytics</h1>
+              <p className="text-sm text-muted-foreground">USGS Earthquake Catalog + PostGIS + Metabase</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-lg bg-ocean px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#125b7f] disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={busy}
-              onClick={onSync}
-              type="button"
-              title="Sync recent USGS data"
-            >
-              <RefreshCw size={17} className={busy ? "animate-spin" : ""} />
-              Sync Data
-            </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={busy}
-              onClick={onImport}
-              type="button"
-              title="Import historical USGS data"
-            >
-              <Database size={17} />
-              Import History
-            </button>
-            <a
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-              href={metabaseUrl}
-              rel="noreferrer"
-              target="_blank"
-              title="Open Metabase BI"
-            >
-              <BarChart3 size={17} />
-              Open Metabase
-            </a>
-            <div className="min-w-[220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {busy ? "Loading data..." : error ? <span className="text-coral">{error}</span> : status || "Ready"}
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="lg"
+                disabled={busy}
+                onClick={onSync}
+                type="button"
+                title="Sync recent USGS data"
+              >
+                <RefreshCw size={17} className={busy ? "animate-spin" : ""} />
+                Sync Data
+              </Button>
+              <Button
+                size="lg"
+                variant="secondary"
+                disabled={busy}
+                onClick={onImport}
+                type="button"
+                title="Import historical USGS data"
+              >
+                <Database size={17} />
+                Import History
+              </Button>
+              <a
+                className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+                href={metabaseUrl}
+                rel="noreferrer"
+                target="_blank"
+                title="Open Metabase BI"
+              >
+                <BarChart3 size={17} />
+                Open Metabase
+              </a>
             </div>
+            <Separator className="hidden h-8 lg:block" orientation="vertical" />
+            <Alert className={cn("min-w-[280px] max-w-xl py-2", error && "border-destructive/40")} variant={error ? "destructive" : "default"}>
+              <AlertDescription className="line-clamp-2">
+                {busy ? "Loading data..." : error || status || "Ready"}
+              </AlertDescription>
+            </Alert>
           </div>
         </div>
       </header>
