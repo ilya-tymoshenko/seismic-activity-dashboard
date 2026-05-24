@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet.markercluster";
 import type { Bounds, Cluster, Earthquake } from "../../lib/types";
 import { formatDateTime, formatNumber, magnitudeTone } from "../../lib/format";
+import { Card } from "@/components/ui/card";
 import ClusterLayer from "./ClusterLayer";
 
 type Props = {
@@ -15,7 +16,8 @@ type Props = {
 
 export default function EarthquakeMap({ earthquakes, clusters, showClusters, onBoundsChange }: Props) {
   return (
-    <div className="h-[620px] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-panel xl:h-[760px]">
+    <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[760px]">
+      <MapLegend showClusters={showClusters} />
       <MapContainer
         center={[20, 0]}
         className="z-0"
@@ -34,7 +36,31 @@ export default function EarthquakeMap({ earthquakes, clusters, showClusters, onB
         <MarkerClusterLayer earthquakes={earthquakes} />
         {showClusters && <ClusterLayer clusters={clusters} />}
       </MapContainer>
+    </Card>
+  );
+}
+
+function MapLegend({ showClusters }: { showClusters: boolean }) {
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 z-[500] rounded-lg border bg-card/95 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
+      <div className="mb-1 font-medium text-foreground">Magnitude</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <LegendDot color="#2ca58d" label="< 3" />
+        <LegendDot color="#f3a712" label="3-4.9" />
+        <LegendDot color="#e15b42" label="5-6.9" />
+        <LegendDot color="#b91c1c" label="7+" />
+      </div>
+      {showClusters && <div className="mt-1 text-[11px]">Analytical clusters enabled</div>}
     </div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="size-2.5 rounded-full" style={{ backgroundColor: color }} />
+      {label}
+    </span>
   );
 }
 
@@ -111,7 +137,7 @@ function clamp(value: number, min: number, max: number) {
 function renderEventPopup(earthquake: Earthquake) {
   return `
     <div class="min-w-[220px] space-y-1 text-sm">
-      <div class="font-bold text-ink">${escapeHTML(earthquake.place || "Unknown location")}</div>
+      <div class="font-bold text-foreground">${escapeHTML(earthquake.place || "Unknown location")}</div>
       <div><strong>Time:</strong> ${escapeHTML(formatDateTime(earthquake.time))}</div>
       <div><strong>Magnitude:</strong> ${escapeHTML(formatNumber(earthquake.magnitude, 1))}</div>
       <div><strong>Depth:</strong> ${escapeHTML(formatNumber(earthquake.depth, 1))} km</div>
