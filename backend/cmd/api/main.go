@@ -38,7 +38,7 @@ func main() {
 	importer := usgs.NewImporter(usgsClient, repo)
 	importJobs := jobs.NewImportJobManager(ctx, importer)
 	handler := handlers.New(repo, importer, importJobs, cfg)
-	jobs.NewUSGSRunner(cfg, repo, importer).Start(ctx)
+	jobs.NewUSGSRunner(cfg, repo, importer, importJobs).Start(ctx)
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{

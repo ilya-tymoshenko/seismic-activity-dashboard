@@ -96,12 +96,13 @@ export type ImportSummary = {
 
 export type ImportJobStatus = {
   id: string;
-  kind: "sync" | "history" | "filter";
+  kind: "sync" | "history" | "filter" | "seed";
   label: string;
   status: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
   message: string;
   params: {
     feed?: string;
+    seedFile?: string;
     dateFrom?: string;
     dateTo?: string;
     days?: number;

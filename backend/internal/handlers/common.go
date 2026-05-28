@@ -34,6 +34,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	api.POST("/sync", h.Sync)
 	api.POST("/import/history", h.ImportHistory)
 	api.POST("/import/filter", h.ImportFilter)
+	api.GET("/jobs/active", h.ActiveImportJob)
 	api.GET("/jobs/:id", h.ImportJob)
 	api.POST("/jobs/:id/cancel", h.CancelImportJob)
 	api.GET("/earthquakes", h.Earthquakes)

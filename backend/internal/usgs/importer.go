@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -94,11 +95,25 @@ func (i *Importer) SyncFeedWithProgress(ctx context.Context, feed string, progre
 }
 
 func (i *Importer) ImportFile(ctx context.Context, path string) (models.ImportSummary, error) {
+	return i.ImportFileWithProgress(ctx, path, nil)
+}
+
+func (i *Importer) ImportFileWithProgress(ctx context.Context, path string, progress ProgressCallback) (models.ImportSummary, error) {
+	report(progress, models.ImportProgressUpdate{
+		Progress: 0,
+		Message:  "Waiting for importer",
+	})
+
 	release, err := i.acquire(ctx)
 	if err != nil {
 		return models.ImportSummary{}, err
 	}
 	defer release()
+
+	report(progress, models.ImportProgressUpdate{
+		Progress: 1,
+		Message:  "Opening seed file",
+	})
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -106,12 +121,34 @@ func (i *Importer) ImportFile(ctx context.Context, path string) (models.ImportSu
 	}
 	defer file.Close()
 
-	summary, err := i.processFeatureCollectionStream(ctx, json.NewDecoder(file))
+	fileSize := int64(0)
+	if info, statErr := file.Stat(); statErr == nil {
+		fileSize = info.Size()
+	}
+	counter := &countingReader{reader: file}
+	summary, err := i.processFeatureCollectionStream(ctx, json.NewDecoder(counter), func(partial models.ImportSummary) {
+		partial.Source = "USGS"
+		partial.Feed = path
+		report(progress, models.ImportProgressUpdate{
+			Progress:    seedFileProgress(counter.Value(), fileSize),
+			Message:     fmt.Sprintf("Importing seed file: %d events", partial.Fetched),
+			CurrentStep: partial.Fetched,
+			Summary:     partial,
+		})
+	})
 	if err != nil {
+		summary.Source = "USGS"
+		summary.Feed = path
 		return summary, fmt.Errorf("decode seed file %s: %w", path, err)
 	}
 	summary.Source = "USGS"
 	summary.Feed = path
+	report(progress, models.ImportProgressUpdate{
+		Progress:    100,
+		Message:     "Seed import complete",
+		CurrentStep: summary.Fetched,
+		Summary:     summary,
+	})
 	return summary, nil
 }
 
@@ -450,7 +487,7 @@ func (i *Importer) processCollection(ctx context.Context, collection models.USGS
 	return summary, nil
 }
 
-func (i *Importer) processFeatureCollectionStream(ctx context.Context, decoder *json.Decoder) (models.ImportSummary, error) {
+func (i *Importer) processFeatureCollectionStream(ctx context.Context, decoder *json.Decoder, progress func(summary models.ImportSummary)) (models.ImportSummary, error) {
 	var summary models.ImportSummary
 	token, err := decoder.Token()
 	if err != nil {
@@ -483,7 +520,7 @@ func (i *Importer) processFeatureCollectionStream(ctx context.Context, decoder *
 			}
 			featureCollection = true
 		case "features":
-			if err := i.processFeatureArray(ctx, decoder, &summary); err != nil {
+			if err := i.processFeatureArray(ctx, decoder, &summary, progress); err != nil {
 				return summary, err
 			}
 			featuresSeen = true
@@ -503,10 +540,11 @@ func (i *Importer) processFeatureCollectionStream(ctx context.Context, decoder *
 	if !featuresSeen {
 		return summary, fmt.Errorf("missing GeoJSON features array")
 	}
+	reportSeedFileProgress(progress, summary)
 	return summary, nil
 }
 
-func (i *Importer) processFeatureArray(ctx context.Context, decoder *json.Decoder, summary *models.ImportSummary) error {
+func (i *Importer) processFeatureArray(ctx context.Context, decoder *json.Decoder, summary *models.ImportSummary, progress func(summary models.ImportSummary)) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -517,7 +555,6 @@ func (i *Importer) processFeatureArray(ctx context.Context, decoder *json.Decode
 
 	for decoder.More() {
 		if err := ctx.Err(); err != nil {
-			summary.Errors++
 			return err
 		}
 		var feature models.USGSFeature
@@ -527,6 +564,9 @@ func (i *Importer) processFeatureArray(ctx context.Context, decoder *json.Decode
 		}
 		summary.Fetched++
 		i.processFeature(ctx, feature, summary)
+		if shouldReportSeedFileProgress(summary.Fetched) {
+			reportSeedFileProgress(progress, *summary)
+		}
 	}
 	_, err = decoder.Token()
 	return err
@@ -559,6 +599,31 @@ func reportCollectionProgress(progress func(done int, total int, summary models.
 	}
 }
 
+func reportSeedFileProgress(progress func(summary models.ImportSummary), summary models.ImportSummary) {
+	if progress != nil {
+		progress(summary)
+	}
+}
+
+func shouldReportSeedFileProgress(fetched int) bool {
+	return fetched == 1 || fetched%1000 == 0
+}
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
+func (r *countingReader) Value() int64 {
+	return r.bytesRead
+}
+
 func shouldReportCollectionProgress(done int, total int) bool {
 	return done == 1 || done == total || done%100 == 0
 }
@@ -581,6 +646,20 @@ func progressForHistory(completedChunks int, doneInChunk int, totalInChunk int, 
 	progress := (float64(completedChunks) + chunkProgress) / float64(totalChunks) * 100
 	if progress > 100 {
 		return 100
+	}
+	if progress < 0 {
+		return 0
+	}
+	return progress
+}
+
+func seedFileProgress(bytesRead int64, totalBytes int64) float64 {
+	if totalBytes <= 0 {
+		return 0
+	}
+	progress := 1 + (float64(bytesRead)/float64(totalBytes))*98
+	if progress > 99 {
+		return 99
 	}
 	if progress < 0 {
 		return 0

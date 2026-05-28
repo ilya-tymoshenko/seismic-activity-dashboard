@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelImportJob,
   fetchAnalytics,
+  fetchActiveImportJob,
   fetchEarthquakes,
   fetchImportJob,
   fetchStats,
@@ -29,6 +30,22 @@ export function useDashboardData() {
   const [actionJob, setActionJob] = useState<ImportJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Dashboard ready. Sync or import USGS data to populate the database.");
+  const actionJobRef = useRef<ImportJobStatus | null>(null);
+  const activeJobObserverRef = useRef(false);
+  const appliedFiltersRef = useRef(appliedFilters);
+  const boundsRef = useRef(bounds);
+
+  useEffect(() => {
+    actionJobRef.current = actionJob;
+  }, [actionJob]);
+
+  useEffect(() => {
+    appliedFiltersRef.current = appliedFilters;
+  }, [appliedFilters]);
+
+  useEffect(() => {
+    boundsRef.current = bounds;
+  }, [bounds]);
 
   const loadSummary = useCallback(async (filters: Filters) => {
     setSummaryBusy(true);
@@ -120,6 +137,55 @@ export function useDashboardData() {
     }
   }, []);
 
+  useEffect(() => {
+    let stopped = false;
+
+    const observeActiveJob = async () => {
+      if (stopped || activeJobObserverRef.current || isActiveJob(actionJobRef.current)) {
+        return;
+      }
+
+      let activeJob: ImportJobStatus | null = null;
+      try {
+        activeJob = await fetchActiveImportJob();
+      } catch {
+        return;
+      }
+      if (stopped || !activeJob || !isActiveJob(activeJob) || activeJobObserverRef.current || isActiveJob(actionJobRef.current)) {
+        return;
+      }
+
+      activeJobObserverRef.current = true;
+      setActionBusy(true);
+      setActionJob(activeJob);
+      setStatus(formatJobStatus(activeJob));
+      try {
+        const job = await waitForJob(activeJob.id);
+        setStatus(formatTerminalJob(job));
+        await Promise.all([
+          loadSummary(appliedFiltersRef.current),
+          loadEarthquakes(appliedFiltersRef.current, boundsRef.current)
+        ]);
+      } catch (err) {
+        if (!stopped) {
+          setError(err instanceof Error ? err.message : "Import job failed");
+        }
+      } finally {
+        activeJobObserverRef.current = false;
+        if (!stopped) {
+          setActionBusy(false);
+        }
+      }
+    };
+
+    void observeActiveJob();
+    const interval = window.setInterval(observeActiveJob, 1500);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [loadEarthquakes, loadSummary, waitForJob]);
+
   const handleSync = useCallback(async () => {
     setActionBusy(true);
     setActionJob(null);
@@ -170,7 +236,7 @@ export function useDashboardData() {
     try {
       const nextFilters = { ...draftFilters };
       setAppliedFilters(nextFilters);
-      const started = await importFilteredData(nextFilters, bounds, 30);
+      const started = await importFilteredData(nextFilters, 30);
       setActionJob(started.status);
       setStatus(formatJobStatus(started.status));
       const job = await waitForJob(started.jobId);
@@ -249,6 +315,6 @@ function formatTerminalJob(job: ImportJobStatus) {
   return `${job.label} completed: fetched ${summary.fetched.toLocaleString()}, processed ${summary.processed.toLocaleString()}, skipped ${summary.skipped.toLocaleString()}, errors ${summary.errors.toLocaleString()}.`;
 }
 
-function isActiveJob(job: ImportJobStatus) {
-  return job.status === "queued" || job.status === "running" || job.status === "canceling";
+function isActiveJob(job: ImportJobStatus | null | undefined) {
+  return !!job && (job.status === "queued" || job.status === "running" || job.status === "canceling");
 }

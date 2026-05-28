@@ -118,6 +118,7 @@ type ImportJobStartResponse struct {
 
 type ImportJobParams struct {
 	Feed            string  `json:"feed,omitempty"`
+	SeedFile        string  `json:"seedFile,omitempty"`
 	DateFrom        string  `json:"dateFrom,omitempty"`
 	DateTo          string  `json:"dateTo,omitempty"`
 	Days            int     `json:"days,omitempty"`

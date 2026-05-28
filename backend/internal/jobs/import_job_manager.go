@@ -143,6 +143,43 @@ func (m *ImportJobManager) StartFilteredImport(filters models.Filters, chunkDays
 	return status, nil
 }
 
+func (m *ImportJobManager) RunSeedFile(ctx context.Context, path string) (models.ImportJobStatus, models.ImportSummary, error) {
+	id, err := newImportJobID()
+	if err != nil {
+		return models.ImportJobStatus{}, models.ImportSummary{}, err
+	}
+	status := models.ImportJobStatus{
+		ID:      id,
+		Kind:    "seed",
+		Label:   "Seed Import",
+		Status:  importJobStatusQueued,
+		Message: "Queued",
+		Params: models.ImportJobParams{
+			SeedFile: path,
+		},
+		StartedAt: time.Now().UTC(),
+	}
+	jobCtx, cancel := context.WithCancel(ctx)
+	status, started, err := m.storeImportJob(status, cancel)
+	if err != nil {
+		cancel()
+		return models.ImportJobStatus{}, models.ImportSummary{}, err
+	}
+	if !started {
+		cancel()
+		return status, status.Summary, ErrImportJobAlreadyActive
+	}
+
+	summary, err := m.importer.ImportFileWithProgress(jobCtx, path, m.progressUpdater(id))
+	m.finish(id, summary, err)
+
+	finishedStatus, ok := m.Get(id)
+	if ok {
+		status = finishedStatus
+	}
+	return status, summary, err
+}
+
 func (m *ImportJobManager) Get(id string) (models.ImportJobStatus, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -152,6 +189,24 @@ func (m *ImportJobManager) Get(id string) (models.ImportJobStatus, bool) {
 		return models.ImportJobStatus{}, false
 	}
 	return record.status, true
+}
+
+func (m *ImportJobManager) Active() (models.ImportJobStatus, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var active models.ImportJobStatus
+	found := false
+	for _, record := range m.jobs {
+		if !isActiveImportJobStatus(record.status.Status) {
+			continue
+		}
+		if !found || record.status.StartedAt.Before(active.StartedAt) {
+			active = record.status
+			found = true
+		}
+	}
+	return active, found
 }
 
 func (m *ImportJobManager) Cancel(id string) (models.ImportJobStatus, bool) {

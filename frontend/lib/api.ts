@@ -34,7 +34,7 @@ function buildQuery(filters: Filters = {}, bounds?: Bounds): string {
   return query ? `?${query}` : "";
 }
 
-function buildImportFilterQuery(filters: Filters, bounds?: Bounds, chunkDays = 30): string {
+function buildImportFilterQuery(filters: Filters, chunkDays = 30): string {
   const params = new URLSearchParams();
 
   add(params, "dateFrom", filters.dateFrom);
@@ -49,9 +49,6 @@ function buildImportFilterQuery(filters: Filters, bounds?: Bounds, chunkDays = 3
 
   if (filters.tsunamiOnly) {
     params.set("tsunami", "1");
-  }
-  if (bounds) {
-    params.set("bbox", `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`);
   }
 
   const query = params.toString();
@@ -118,10 +115,34 @@ export function importHistory(days = 3650, minMagnitude = 2.5, chunkDays = 30) {
   });
 }
 
-export function importFilteredData(filters: Filters, bounds?: Bounds, chunkDays = 30) {
-  return request<ImportJobStartResponse>(`/api/import/filter${buildImportFilterQuery(filters, bounds, chunkDays)}`, {
+export function importFilteredData(filters: Filters, chunkDays = 30) {
+  return request<ImportJobStartResponse>(`/api/import/filter${buildImportFilterQuery(filters, chunkDays)}`, {
     method: "POST"
   });
+}
+
+export async function fetchActiveImportJob() {
+  const response = await fetch(`${API_URL}/api/jobs/active`, {
+    headers: {
+      Accept: "application/json"
+    }
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) {
+        message = body.error;
+      }
+    } catch {
+      // keep default message
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<ImportJobStatus>;
 }
 
 export function fetchImportJob(jobId: string) {

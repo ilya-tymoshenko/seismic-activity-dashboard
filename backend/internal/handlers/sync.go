@@ -94,6 +94,15 @@ func (h *Handler) ImportJob(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
+func (h *Handler) ActiveImportJob(c *gin.Context) {
+	status, ok := h.importJobs.Active()
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active import job"})
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
 func (h *Handler) CancelImportJob(c *gin.Context) {
 	status, ok := h.importJobs.Cancel(c.Param("id"))
 	if !ok {

@@ -18,13 +18,14 @@ import (
 const seedImportStateKey = "usgs_seed_file_sha256"
 
 type USGSRunner struct {
-	cfg      config.Config
-	repo     *repository.EarthquakeRepository
-	importer *usgs.Importer
+	cfg        config.Config
+	repo       *repository.EarthquakeRepository
+	importer   *usgs.Importer
+	importJobs *ImportJobManager
 }
 
-func NewUSGSRunner(cfg config.Config, repo *repository.EarthquakeRepository, importer *usgs.Importer) *USGSRunner {
-	return &USGSRunner{cfg: cfg, repo: repo, importer: importer}
+func NewUSGSRunner(cfg config.Config, repo *repository.EarthquakeRepository, importer *usgs.Importer, importJobs *ImportJobManager) *USGSRunner {
+	return &USGSRunner{cfg: cfg, repo: repo, importer: importer, importJobs: importJobs}
 }
 
 func (r *USGSRunner) Start(ctx context.Context) {
@@ -76,7 +77,7 @@ func (r *USGSRunner) runSeedImport(ctx context.Context) {
 	}
 
 	log.Printf("USGS seed import started: file=%s sha256=%s", r.cfg.USGSSeedFile, checksum)
-	summary, err := r.importer.ImportFile(ctx, r.cfg.USGSSeedFile)
+	_, summary, err := r.importJobs.RunSeedFile(ctx, r.cfg.USGSSeedFile)
 	if err != nil {
 		log.Printf("USGS seed import failed: %v", err)
 		r.logDatabaseStatus(ctx, "seed import failed")
