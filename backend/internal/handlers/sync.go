@@ -1,14 +1,19 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"earthquake-big-data/backend/internal/jobs"
 	"earthquake-big-data/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
+
+const persistedSeedProgressMaxAge = 2 * time.Minute
 
 func (h *Handler) Sync(c *gin.Context) {
 	feed := c.DefaultQuery("feed", h.cfg.USGSSyncFeed)
@@ -88,8 +93,16 @@ func (h *Handler) ImportFilter(c *gin.Context) {
 func (h *Handler) ImportJob(c *gin.Context) {
 	status, ok := h.importJobs.Get(c.Param("id"))
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
-		return
+		var err error
+		status, ok, err = h.persistedSeedImportJob(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, status)
 }
@@ -110,4 +123,35 @@ func (h *Handler) CancelImportJob(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, status)
+}
+
+func (h *Handler) persistedSeedImportJob(ctx context.Context, id string) (models.ImportJobStatus, bool, error) {
+	status, updatedAt, ok, err := h.persistedSeedImportProgress(ctx)
+	if err != nil || !ok {
+		return status, ok, err
+	}
+	if status.ID != id || jobs.IsActiveImportJobStatus(status.Status) || stalePersistedSeedProgress(updatedAt) {
+		return models.ImportJobStatus{}, false, nil
+	}
+	return status, true, nil
+}
+
+func (h *Handler) persistedSeedImportProgress(ctx context.Context) (models.ImportJobStatus, time.Time, bool, error) {
+	value, updatedAt, ok, err := h.repo.ImportStateWithUpdatedAt(ctx, jobs.SeedImportProgressStateKey)
+	if err != nil || !ok {
+		return models.ImportJobStatus{}, time.Time{}, ok, err
+	}
+
+	var status models.ImportJobStatus
+	if err := json.Unmarshal([]byte(value), &status); err != nil {
+		return models.ImportJobStatus{}, time.Time{}, false, err
+	}
+	if status.Kind != "seed" {
+		return models.ImportJobStatus{}, time.Time{}, false, nil
+	}
+	return status, updatedAt, true, nil
+}
+
+func stalePersistedSeedProgress(updatedAt time.Time) bool {
+	return time.Since(updatedAt) > persistedSeedProgressMaxAge
 }

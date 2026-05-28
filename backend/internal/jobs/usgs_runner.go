@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"earthquake-big-data/backend/internal/config"
+	"earthquake-big-data/backend/internal/models"
 	"earthquake-big-data/backend/internal/repository"
 	"earthquake-big-data/backend/internal/usgs"
 )
@@ -77,7 +79,9 @@ func (r *USGSRunner) runSeedImport(ctx context.Context) {
 	}
 
 	log.Printf("USGS seed import started: file=%s sha256=%s", r.cfg.USGSSeedFile, checksum)
-	_, summary, err := r.importJobs.RunSeedFile(ctx, r.cfg.USGSSeedFile)
+	_, summary, err := r.importJobs.RunSeedFile(ctx, r.cfg.USGSSeedFile, func(status models.ImportJobStatus) {
+		r.persistSeedImportProgress(ctx, status)
+	})
 	if err != nil {
 		log.Printf("USGS seed import failed: %v", err)
 		r.logDatabaseStatus(ctx, "seed import failed")
@@ -102,6 +106,19 @@ func (r *USGSRunner) runSeedImport(ctx context.Context) {
 	}
 	log.Printf("USGS seed import state updated: key=%s sha256=%s", seedImportStateKey, checksum)
 	r.logDatabaseStatus(ctx, "seed import complete")
+}
+
+func (r *USGSRunner) persistSeedImportProgress(ctx context.Context, status models.ImportJobStatus) {
+	payload, err := json.Marshal(status)
+	if err != nil {
+		log.Printf("USGS seed import progress marshal failed: %v", err)
+		return
+	}
+	persistCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := r.repo.SetImportState(persistCtx, SeedImportProgressStateKey, string(payload)); err != nil {
+		log.Printf("USGS seed import progress update failed: %v", err)
+	}
 }
 
 func (r *USGSRunner) runSyncLoop(ctx context.Context) {

@@ -36,6 +36,19 @@ func (r *EarthquakeRepository) ImportState(ctx context.Context, key string) (str
 	return value, true, nil
 }
 
+func (r *EarthquakeRepository) ImportStateWithUpdatedAt(ctx context.Context, key string) (string, time.Time, bool, error) {
+	var value string
+	var updatedAt time.Time
+	err := r.db.QueryRowContext(ctx, `SELECT value, updated_at FROM import_state WHERE key = $1`, key).Scan(&value, &updatedAt)
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, false, nil
+	}
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	return value, updatedAt.UTC(), true, nil
+}
+
 func (r *EarthquakeRepository) SetImportState(ctx context.Context, key string, value string) error {
 	_, err := r.db.ExecContext(
 		ctx,

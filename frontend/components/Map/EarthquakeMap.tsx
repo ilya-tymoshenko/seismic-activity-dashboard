@@ -1,4 +1,5 @@
 import L from "leaflet";
+import type { MutableRefObject } from "react";
 import { useCallback, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Bounds, Earthquake } from "../../lib/types";
@@ -12,10 +13,24 @@ type Props = {
 
 type DrawnPoint = {
   earthquake: Earthquake;
+  kind: "event";
   radius: number;
   x: number;
   y: number;
 };
+
+type DrawnCluster = {
+  earthquakes: Earthquake[];
+  kind: "cluster";
+  latitude: number;
+  longitude: number;
+  maxMagnitude: number | null;
+  radius: number;
+  x: number;
+  y: number;
+};
+
+type DrawnItem = DrawnCluster | DrawnPoint;
 
 export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
   return (
@@ -67,7 +82,7 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
   const map = useMap();
-  const pointsRef = useRef<DrawnPoint[]>([]);
+  const itemsRef = useRef<DrawnItem[]>([]);
   const earthquakesRef = useRef(earthquakes);
   const redrawRef = useRef<() => void>(() => undefined);
   const popupRef = useRef<L.Popup | null>(null);
@@ -118,32 +133,45 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, size.x, size.y);
 
-      const nextPoints: DrawnPoint[] = [];
+      const visiblePoints: DrawnPoint[] = [];
       for (const earthquake of earthquakesRef.current) {
         const point = map.latLngToContainerPoint([earthquake.latitude, earthquake.longitude]);
         const radius = markerRadius(earthquake.magnitude);
         if (point.x < -radius || point.y < -radius || point.x > size.x + radius || point.y > size.y + radius) {
           continue;
         }
-        drawMarker(context, point.x, point.y, radius, magnitudeTone(earthquake.magnitude));
-        nextPoints.push({
+        visiblePoints.push({
           earthquake,
+          kind: "event",
           radius,
           x: point.x,
           y: point.y
         });
       }
-      pointsRef.current = nextPoints;
+
+      const nextItems = clusterVisiblePoints(visiblePoints, map.getZoom(), resolveMaxZoom(map));
+      const singles = nextItems.filter((item) => item.kind === "event") as DrawnPoint[];
+      const clusters = nextItems.filter((item) => item.kind === "cluster") as DrawnCluster[];
+
+      for (const item of singles) {
+        drawMarker(context, item.x, item.y, item.radius, magnitudeTone(item.earthquake.magnitude));
+      }
+      for (const item of clusters) {
+        drawCluster(context, item);
+      }
+
+      itemsRef.current = nextItems;
+      closePopupIfHidden(nextItems, popupRef, popupEarthquakeIDRef);
     };
 
     const findHit = (point: L.Point) => {
-      let selected: DrawnPoint | null = null;
+      let selected: DrawnItem | null = null;
       let selectedDistance = Number.POSITIVE_INFINITY;
-      for (const candidate of pointsRef.current) {
+      for (const candidate of itemsRef.current) {
         const dx = candidate.x - point.x;
         const dy = candidate.y - point.y;
         const distance = dx * dx + dy * dy;
-        const hitRadius = candidate.radius + 5;
+        const hitRadius = candidate.radius + (candidate.kind === "cluster" ? 4 : 5);
         if (distance <= hitRadius * hitRadius && distance < selectedDistance) {
           selected = candidate;
           selectedDistance = distance;
@@ -158,6 +186,10 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
         return;
       }
       popupRef.current?.remove();
+      if (hit.kind === "cluster") {
+        zoomToCluster(map, hit);
+        return;
+      }
 
       const popup = L.popup({ maxWidth: 320 })
         .setLatLng([hit.earthquake.latitude, hit.earthquake.longitude])
@@ -209,7 +241,7 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       popupEarthquakeIDRef.current = null;
       map.getContainer().style.cursor = "";
       L.DomUtil.remove(canvas);
-      pointsRef.current = [];
+      itemsRef.current = [];
       redrawRef.current = () => undefined;
     };
   }, [map]);
@@ -288,6 +320,225 @@ function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, rad
   context.arc(x, y, Math.max(1.75, radius * 0.28), 0, Math.PI * 2);
   context.fillStyle = "rgba(255, 255, 255, 0.86)";
   context.fill();
+}
+
+function clusterVisiblePoints(points: DrawnPoint[], zoom: number, maxZoom: number): DrawnItem[] {
+  const clusterRadius = clusterPixelRadius(zoom);
+  const clusters: DrawnCluster[] = [];
+  const isTerminalZoom = zoom >= maxZoom;
+
+  for (const point of points) {
+    let nearestCluster: DrawnCluster | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const cluster of clusters) {
+      const dx = cluster.x - point.x;
+      const dy = cluster.y - point.y;
+      const distance = dx * dx + dy * dy;
+      if (distance <= clusterRadius * clusterRadius && distance < nearestDistance) {
+        nearestCluster = cluster;
+        nearestDistance = distance;
+      }
+    }
+
+    if (nearestCluster) {
+      addPointToCluster(nearestCluster, point);
+    } else {
+      clusters.push({
+        earthquakes: [point.earthquake],
+        kind: "cluster",
+        latitude: point.earthquake.latitude,
+        longitude: point.earthquake.longitude,
+        maxMagnitude: point.earthquake.magnitude,
+        radius: point.radius,
+        x: point.x,
+        y: point.y
+      });
+    }
+  }
+
+  return clusters.flatMap((cluster) => {
+    if (cluster.earthquakes.length === 1) {
+      const earthquake = cluster.earthquakes[0];
+      return {
+        earthquake,
+        kind: "event",
+        radius: markerRadius(earthquake.magnitude),
+        x: cluster.x,
+        y: cluster.y
+      } satisfies DrawnPoint;
+    }
+    if (isTerminalZoom) {
+      return expandTerminalCluster(cluster);
+    }
+    cluster.radius = clusterMarkerRadius(cluster.earthquakes.length);
+    return cluster;
+  });
+}
+
+function addPointToCluster(cluster: DrawnCluster, point: DrawnPoint) {
+  const nextCount = cluster.earthquakes.length + 1;
+  cluster.x = (cluster.x * cluster.earthquakes.length + point.x) / nextCount;
+  cluster.y = (cluster.y * cluster.earthquakes.length + point.y) / nextCount;
+  cluster.latitude = (cluster.latitude * cluster.earthquakes.length + point.earthquake.latitude) / nextCount;
+  cluster.longitude = circularLongitudeMean([...cluster.earthquakes, point.earthquake]);
+  cluster.maxMagnitude = maxMagnitude(cluster.maxMagnitude, point.earthquake.magnitude);
+  cluster.earthquakes.push(point.earthquake);
+}
+
+function clusterPixelRadius(zoom: number) {
+  if (zoom >= 8) {
+    return 30;
+  }
+  if (zoom >= 5) {
+    return 38;
+  }
+  return 48;
+}
+
+function clusterMarkerRadius(count: number) {
+  if (count >= 1000) {
+    return 34;
+  }
+  if (count >= 100) {
+    return 30;
+  }
+  if (count >= 10) {
+    return 25;
+  }
+  return 21;
+}
+
+function expandTerminalCluster(cluster: DrawnCluster): DrawnPoint[] {
+  return cluster.earthquakes.map((earthquake, index) => {
+    const [offsetX, offsetY] = terminalClusterOffset(index);
+    return {
+      earthquake,
+      kind: "event",
+      radius: markerRadius(earthquake.magnitude),
+      x: cluster.x + offsetX,
+      y: cluster.y + offsetY
+    };
+  });
+}
+
+function terminalClusterOffset(index: number) {
+  if (index === 0) {
+    return [0, 0] as const;
+  }
+
+  let ring = 1;
+  let firstIndexInRing = 1;
+  let pointsInRing = 6;
+  while (index >= firstIndexInRing + pointsInRing) {
+    firstIndexInRing += pointsInRing;
+    ring += 1;
+    pointsInRing = ring * 6;
+  }
+
+  const positionInRing = index - firstIndexInRing;
+  const angle = (Math.PI * 2 * positionInRing) / pointsInRing - Math.PI / 2;
+  const distance = 24 + (ring - 1) * 18;
+  return [Math.cos(angle) * distance, Math.sin(angle) * distance] as const;
+}
+
+function drawCluster(context: CanvasRenderingContext2D, cluster: DrawnCluster) {
+  const count = cluster.earthquakes.length;
+  const color = magnitudeTone(cluster.maxMagnitude);
+  context.beginPath();
+  context.arc(cluster.x, cluster.y, cluster.radius, 0, Math.PI * 2);
+  context.fillStyle = color;
+  context.fill();
+  context.lineWidth = 4;
+  context.strokeStyle = "rgba(255, 255, 255, 0.92)";
+  context.stroke();
+
+  context.beginPath();
+  context.arc(cluster.x, cluster.y, cluster.radius + 4, 0, Math.PI * 2);
+  context.lineWidth = 2;
+  context.strokeStyle = "rgba(15, 23, 42, 0.28)";
+  context.stroke();
+
+  context.font = `700 ${clusterFontSize(count)}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.fillStyle = "#ffffff";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(formatClusterCount(count), cluster.x, cluster.y);
+}
+
+function clusterFontSize(count: number) {
+  if (count >= 1000) {
+    return 12;
+  }
+  if (count >= 100) {
+    return 13;
+  }
+  return 14;
+}
+
+function formatClusterCount(count: number) {
+  if (count >= 1000) {
+    return `${Math.floor(count / 100) / 10}k`;
+  }
+  return count.toString();
+}
+
+function zoomToCluster(map: L.Map, cluster: DrawnCluster) {
+  const bounds = L.latLngBounds(cluster.earthquakes.map((earthquake) => [earthquake.latitude, earthquake.longitude] as L.LatLngTuple));
+  const nextZoom = Math.min(resolveMaxZoom(map), map.getZoom() + 3);
+  if (bounds.isValid() && !bounds.getNorthEast().equals(bounds.getSouthWest())) {
+    map.fitBounds(bounds.pad(0.25), { maxZoom: nextZoom });
+    return;
+  }
+  map.setView([cluster.latitude, cluster.longitude], nextZoom);
+}
+
+function resolveMaxZoom(map: L.Map) {
+  const maxZoom = map.getMaxZoom();
+  if (Number.isFinite(maxZoom)) {
+    return maxZoom;
+  }
+  return 18;
+}
+
+function closePopupIfHidden(items: DrawnItem[], popupRef: MutableRefObject<L.Popup | null>, popupEarthquakeIDRef: MutableRefObject<string | null>) {
+  const popupEarthquakeID = popupEarthquakeIDRef.current;
+  if (!popupEarthquakeID) {
+    return;
+  }
+  const visibleAsSingle = items.some((item) => item.kind === "event" && item.earthquake.id === popupEarthquakeID);
+  if (!visibleAsSingle) {
+    popupRef.current?.remove();
+    popupRef.current = null;
+    popupEarthquakeIDRef.current = null;
+  }
+}
+
+function maxMagnitude(current: number | null, next: number | null) {
+  if (current === null) {
+    return next;
+  }
+  if (next === null) {
+    return current;
+  }
+  return Math.max(current, next);
+}
+
+function circularLongitudeMean(earthquakes: Earthquake[]) {
+  let sin = 0;
+  let cos = 0;
+  for (const earthquake of earthquakes) {
+    const radians = earthquake.longitude * Math.PI / 180;
+    sin += Math.sin(radians);
+    cos += Math.cos(radians);
+  }
+  const longitude = Math.atan2(sin, cos) * 180 / Math.PI;
+  if (longitude > 180) {
+    return longitude - 360;
+  }
+  if (longitude < -180) {
+    return longitude + 360;
+  }
+  return longitude;
 }
 
 function escapeHTML(value: string) {

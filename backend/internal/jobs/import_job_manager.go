@@ -25,6 +25,8 @@ const (
 
 var ErrImportJobAlreadyActive = errors.New("import job already active")
 
+const SeedImportProgressStateKey = "usgs_seed_file_progress"
+
 type ImportJobManager struct {
 	ctx      context.Context
 	importer *usgs.Importer
@@ -143,7 +145,7 @@ func (m *ImportJobManager) StartFilteredImport(filters models.Filters, chunkDays
 	return status, nil
 }
 
-func (m *ImportJobManager) RunSeedFile(ctx context.Context, path string) (models.ImportJobStatus, models.ImportSummary, error) {
+func (m *ImportJobManager) RunSeedFile(ctx context.Context, path string, onStatus func(models.ImportJobStatus)) (models.ImportJobStatus, models.ImportSummary, error) {
 	id, err := newImportJobID()
 	if err != nil {
 		return models.ImportJobStatus{}, models.ImportSummary{}, err
@@ -169,14 +171,22 @@ func (m *ImportJobManager) RunSeedFile(ctx context.Context, path string) (models
 		cancel()
 		return status, status.Summary, ErrImportJobAlreadyActive
 	}
+	reportImportJobStatus(onStatus, status)
 
-	summary, err := m.importer.ImportFileWithProgress(jobCtx, path, m.progressUpdater(id))
+	progress := m.progressUpdater(id)
+	summary, err := m.importer.ImportFileWithProgress(jobCtx, path, func(update models.ImportProgressUpdate) {
+		progress(update)
+		if current, ok := m.Get(id); ok {
+			reportImportJobStatus(onStatus, current)
+		}
+	})
 	m.finish(id, summary, err)
 
 	finishedStatus, ok := m.Get(id)
 	if ok {
 		status = finishedStatus
 	}
+	reportImportJobStatus(onStatus, status)
 	return status, summary, err
 }
 
@@ -260,6 +270,10 @@ func isActiveImportJobStatus(status string) bool {
 	return status == importJobStatusQueued || status == importJobStatusRunning || status == importJobStatusCanceling
 }
 
+func IsActiveImportJobStatus(status string) bool {
+	return isActiveImportJobStatus(status)
+}
+
 func (m *ImportJobManager) progressUpdater(id string) usgs.ProgressCallback {
 	return func(update models.ImportProgressUpdate) {
 		m.mu.Lock()
@@ -327,6 +341,12 @@ func clampProgress(progress float64) float64 {
 		return 100
 	}
 	return progress
+}
+
+func reportImportJobStatus(callback func(models.ImportJobStatus), status models.ImportJobStatus) {
+	if callback != nil {
+		callback(status)
+	}
 }
 
 func importJobParamsFromFilters(filters models.Filters, chunkDays int) models.ImportJobParams {
