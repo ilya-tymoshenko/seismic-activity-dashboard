@@ -1,7 +1,6 @@
 import L from "leaflet";
 import { useCallback, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
-import "leaflet.markercluster";
 import type { Bounds, Earthquake } from "../../lib/types";
 import { formatDateTime, formatNumber, magnitudeTone } from "../../lib/format";
 import { Card } from "@/components/ui/card";
@@ -9,6 +8,13 @@ import { Card } from "@/components/ui/card";
 type Props = {
   earthquakes: Earthquake[];
   onBoundsChange: (bounds: Bounds) => void;
+};
+
+type DrawnPoint = {
+  earthquake: Earthquake;
+  radius: number;
+  x: number;
+  y: number;
 };
 
 export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
@@ -30,7 +36,7 @@ export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <BoundsReporter onBoundsChange={onBoundsChange} />
-        <MarkerClusterLayer earthquakes={earthquakes} />
+        <CanvasMarkerLayer earthquakes={earthquakes} />
       </MapContainer>
     </Card>
   );
@@ -59,32 +65,154 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function MarkerClusterLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
+function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
   const map = useMap();
+  const pointsRef = useRef<DrawnPoint[]>([]);
+  const earthquakesRef = useRef(earthquakes);
+  const redrawRef = useRef<() => void>(() => undefined);
+  const popupRef = useRef<L.Popup | null>(null);
+  const popupEarthquakeIDRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const leafletWithCluster = L as typeof L & {
-      markerClusterGroup: (options?: Record<string, unknown>) => L.LayerGroup;
-    };
-    const group = leafletWithCluster.markerClusterGroup({
-      chunkedLoading: true,
-      maxClusterRadius: 48,
-      spiderfyOnMaxZoom: true
-    });
+    earthquakesRef.current = earthquakes;
+    if (popupEarthquakeIDRef.current) {
+      const currentPopupEarthquake = earthquakes.find((earthquake) => earthquake.id === popupEarthquakeIDRef.current);
+      if (currentPopupEarthquake) {
+        popupRef.current
+          ?.setLatLng([currentPopupEarthquake.latitude, currentPopupEarthquake.longitude])
+          .setContent(renderEventPopup(currentPopupEarthquake));
+      } else {
+        popupRef.current?.remove();
+        popupRef.current = null;
+        popupEarthquakeIDRef.current = null;
+      }
+    }
+    redrawRef.current();
+  }, [earthquakes]);
 
-    earthquakes.forEach((earthquake) => {
-      const marker = L.marker([earthquake.latitude, earthquake.longitude], {
-        icon: makeIcon(earthquake.magnitude)
+  useEffect(() => {
+    const canvas = L.DomUtil.create("canvas", "leaflet-earthquake-canvas leaflet-layer") as HTMLCanvasElement;
+    const pane = map.getPanes().overlayPane;
+    pane.appendChild(canvas);
+
+    const resizeCanvas = () => {
+      const size = map.getSize();
+      const pixelRatio = window.devicePixelRatio || 1;
+      canvas.width = Math.round(size.x * pixelRatio);
+      canvas.height = Math.round(size.y * pixelRatio);
+      canvas.style.width = `${size.x}px`;
+      canvas.style.height = `${size.y}px`;
+      const topLeft = map.containerPointToLayerPoint([0, 0]);
+      L.DomUtil.setPosition(canvas, topLeft);
+    };
+
+    const redraw = () => {
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+
+      resizeCanvas();
+      const size = map.getSize();
+      const pixelRatio = window.devicePixelRatio || 1;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, size.x, size.y);
+
+      const nextPoints: DrawnPoint[] = [];
+      for (const earthquake of earthquakesRef.current) {
+        const point = map.latLngToContainerPoint([earthquake.latitude, earthquake.longitude]);
+        const radius = markerRadius(earthquake.magnitude);
+        if (point.x < -radius || point.y < -radius || point.x > size.x + radius || point.y > size.y + radius) {
+          continue;
+        }
+        drawMarker(context, point.x, point.y, radius, magnitudeTone(earthquake.magnitude));
+        nextPoints.push({
+          earthquake,
+          radius,
+          x: point.x,
+          y: point.y
+        });
+      }
+      pointsRef.current = nextPoints;
+    };
+
+    const findHit = (point: L.Point) => {
+      let selected: DrawnPoint | null = null;
+      let selectedDistance = Number.POSITIVE_INFINITY;
+      for (const candidate of pointsRef.current) {
+        const dx = candidate.x - point.x;
+        const dy = candidate.y - point.y;
+        const distance = dx * dx + dy * dy;
+        const hitRadius = candidate.radius + 5;
+        if (distance <= hitRadius * hitRadius && distance < selectedDistance) {
+          selected = candidate;
+          selectedDistance = distance;
+        }
+      }
+      return selected;
+    };
+
+    const handleClick = (event: L.LeafletMouseEvent) => {
+      const hit = findHit(event.containerPoint);
+      if (!hit) {
+        return;
+      }
+      popupRef.current?.remove();
+
+      const popup = L.popup({ maxWidth: 320 })
+        .setLatLng([hit.earthquake.latitude, hit.earthquake.longitude])
+        .setContent(renderEventPopup(hit.earthquake));
+      popupRef.current = popup;
+      popupEarthquakeIDRef.current = hit.earthquake.id;
+      popup.on("remove", () => {
+        if (popupRef.current === popup) {
+          popupRef.current = null;
+          popupEarthquakeIDRef.current = null;
+        }
       });
-      marker.bindPopup(renderEventPopup(earthquake));
-      group.addLayer(marker);
+      popup.openOn(map);
+    };
+
+    const handleMouseMove = (event: L.LeafletMouseEvent) => {
+      const hit = findHit(event.containerPoint);
+      map.getContainer().style.cursor = hit ? "pointer" : "";
+    };
+
+    const handleMouseOut = () => {
+      map.getContainer().style.cursor = "";
+    };
+
+    redrawRef.current = redraw;
+    redraw();
+
+    map.on({
+      click: handleClick,
+      mousemove: handleMouseMove,
+      mouseout: handleMouseOut,
+      moveend: redraw,
+      resize: redraw,
+      viewreset: redraw,
+      zoomend: redraw
     });
 
-    map.addLayer(group);
     return () => {
-      map.removeLayer(group);
+      map.off({
+        click: handleClick,
+        mousemove: handleMouseMove,
+        mouseout: handleMouseOut,
+        moveend: redraw,
+        resize: redraw,
+        viewreset: redraw,
+        zoomend: redraw
+      });
+      popupRef.current?.remove();
+      popupEarthquakeIDRef.current = null;
+      map.getContainer().style.cursor = "";
+      L.DomUtil.remove(canvas);
+      pointsRef.current = [];
+      redrawRef.current = () => undefined;
     };
-  }, [earthquakes, map]);
+  }, [map]);
 
   return null;
 }
@@ -143,16 +271,23 @@ function renderEventPopup(earthquake: Earthquake) {
   `;
 }
 
-function makeIcon(magnitude: number | null) {
-  const size = Math.max(12, Math.min(40, 12 + (magnitude || 1.5) * 4));
-  const color = magnitudeTone(magnitude);
-  return L.divIcon({
-    className: "",
-    html: `<span class="eq-marker" style="width:${size}px;height:${size}px;background:${color};"></span>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -size / 2]
-  });
+function markerRadius(magnitude: number | null) {
+  return Math.max(6, Math.min(20, 6 + (magnitude || 1.5) * 2));
+}
+
+function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string) {
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.fillStyle = color;
+  context.fill();
+  context.lineWidth = 2;
+  context.strokeStyle = "#ffffff";
+  context.stroke();
+
+  context.beginPath();
+  context.arc(x, y, Math.max(1.75, radius * 0.28), 0, Math.PI * 2);
+  context.fillStyle = "rgba(255, 255, 255, 0.86)";
+  context.fill();
 }
 
 function escapeHTML(value: string) {
