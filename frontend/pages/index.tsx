@@ -21,6 +21,7 @@ export default function HomePage() {
       <AppLayout
         busy={dashboard.busy}
         error={dashboard.error}
+        actionJob={dashboard.actionJob}
         status={dashboard.status}
         onImport={dashboard.handleImport}
         onSync={dashboard.handleSync}

@@ -2,7 +2,9 @@ import { Activity, BarChart3, Database, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import type { ImportJobStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -10,12 +12,14 @@ type Props = {
   busy?: boolean;
   status?: string;
   error?: string | null;
+  actionJob?: ImportJobStatus | null;
   onSync: () => void;
   onImport: () => void;
 };
 
-export default function AppLayout({ children, busy, status, error, onSync, onImport }: Props) {
+export default function AppLayout({ children, busy, status, error, actionJob, onSync, onImport }: Props) {
   const metabaseUrl = process.env.NEXT_PUBLIC_METABASE_URL || "http://localhost:3001";
+  const activeActionJob = actionJob && isActiveActionJob(actionJob) ? actionJob : null;
 
   return (
     <main className="min-h-screen bg-background">
@@ -40,7 +44,7 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
                 type="button"
                 title="Sync recent USGS data"
               >
-                <RefreshCw size={17} className={busy ? "animate-spin" : ""} />
+                <RefreshCw size={17} className={activeActionJob?.kind === "sync" ? "animate-spin" : ""} />
                 Sync Data
               </Button>
               <Button
@@ -51,7 +55,7 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
                 type="button"
                 title="Import historical USGS data"
               >
-                <Database size={17} />
+                <Database size={17} className={activeActionJob?.kind === "history" ? "animate-pulse" : ""} />
                 Import History
               </Button>
               <a
@@ -65,6 +69,7 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
                 Open Metabase
               </a>
             </div>
+            {activeActionJob && <ActionProgress job={activeActionJob} />}
             <Separator className="hidden h-8 lg:block" orientation="vertical" />
             <Alert className={cn("min-w-[280px] max-w-xl py-2", error && "border-destructive/40")} variant={error ? "destructive" : "default"}>
               <AlertDescription className="line-clamp-2">
@@ -77,4 +82,28 @@ export default function AppLayout({ children, busy, status, error, onSync, onImp
       <div className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">{children}</div>
     </main>
   );
+}
+
+function ActionProgress({ job }: { job: ImportJobStatus }) {
+  const progress = Math.round(job.progress);
+  const stepText = job.totalSteps > 0
+    ? `${job.currentStep.toLocaleString()}/${job.totalSteps.toLocaleString()}`
+    : "";
+
+  return (
+    <div className="min-w-[260px] max-w-sm space-y-1">
+      <Progress value={progress}>
+        <ProgressLabel className="text-xs">{job.label}</ProgressLabel>
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">{progress}%</span>
+      </Progress>
+      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="truncate">{job.message}</span>
+        {stepText && <span className="shrink-0 tabular-nums">{stepText}</span>}
+      </div>
+    </div>
+  );
+}
+
+function isActiveActionJob(job: ImportJobStatus) {
+  return job.status === "queued" || job.status === "running";
 }

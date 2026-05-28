@@ -86,3 +86,39 @@ type ImportSummary struct {
 	Skipped      int     `json:"skipped"`
 	Errors       int     `json:"errors"`
 }
+
+type ImportProgressUpdate struct {
+	Progress    float64       `json:"progress"`
+	Message     string        `json:"message"`
+	CurrentStep int           `json:"currentStep"`
+	TotalSteps  int           `json:"totalSteps"`
+	Summary     ImportSummary `json:"summary"`
+}
+
+type ImportJobStatus struct {
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Label       string          `json:"label"`
+	Status      string          `json:"status"`
+	Message     string          `json:"message"`
+	Params      ImportJobParams `json:"params"`
+	Progress    float64         `json:"progress"`
+	CurrentStep int             `json:"currentStep"`
+	TotalSteps  int             `json:"totalSteps"`
+	Summary     ImportSummary   `json:"summary"`
+	Error       string          `json:"error,omitempty"`
+	StartedAt   time.Time       `json:"startedAt"`
+	FinishedAt  *time.Time      `json:"finishedAt,omitempty"`
+}
+
+type ImportJobStartResponse struct {
+	JobID  string          `json:"jobId"`
+	Status ImportJobStatus `json:"status"`
+}
+
+type ImportJobParams struct {
+	Feed         string  `json:"feed,omitempty"`
+	Days         int     `json:"days,omitempty"`
+	MinMagnitude float64 `json:"minMagnitude,omitempty"`
+	ChunkDays    int     `json:"chunkDays,omitempty"`
+}

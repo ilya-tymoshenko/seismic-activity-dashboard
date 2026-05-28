@@ -3,7 +3,8 @@ import type {
   Bounds,
   EarthquakesResponse,
   Filters,
-  ImportSummary,
+  ImportJobStartResponse,
+  ImportJobStatus,
   StatsResponse
 } from "./types";
 
@@ -77,7 +78,7 @@ export function fetchAnalytics(filters: Filters) {
 }
 
 export function syncData(feed = "2.5_day") {
-  return request<ImportSummary>(`/api/sync?feed=${encodeURIComponent(feed)}`, {
+  return request<ImportJobStartResponse>(`/api/sync?feed=${encodeURIComponent(feed)}`, {
     method: "POST"
   });
 }
@@ -88,7 +89,11 @@ export function importHistory(days = 3650, minMagnitude = 2.5, chunkDays = 30) {
     minMagnitude: String(minMagnitude),
     chunkDays: String(chunkDays)
   });
-  return request<ImportSummary>(`/api/import/history?${params.toString()}`, {
+  return request<ImportJobStartResponse>(`/api/import/history?${params.toString()}`, {
     method: "POST"
   });
+}
+
+export function fetchImportJob(jobId: string) {
+  return request<ImportJobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
 }

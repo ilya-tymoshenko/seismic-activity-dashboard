@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   fetchAnalytics,
   fetchEarthquakes,
+  fetchImportJob,
   fetchStats,
   importHistory,
   syncData
 } from "@/lib/api";
-import type { AnalyticsResponse, Bounds, Earthquake, Filters, StatsResponse } from "@/lib/types";
+import type { AnalyticsResponse, Bounds, Earthquake, Filters, ImportJobStatus, StatsResponse } from "@/lib/types";
 
 export const defaultFilters: Filters = {
   minMagnitude: "2.5",
@@ -23,6 +24,7 @@ export function useDashboardData() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [mapBusy, setMapBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [actionJob, setActionJob] = useState<ImportJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Dashboard ready. Sync or import USGS data to populate the database.");
 
@@ -97,40 +99,65 @@ export function useDashboardData() {
     ]);
   }, [appliedFilters, bounds, loadEarthquakes, loadSummary]);
 
+  const waitForJob = useCallback(async (jobId: string) => {
+    for (;;) {
+      await delay(700);
+      const nextJob = await fetchImportJob(jobId);
+      setActionJob(nextJob);
+      setStatus(formatJobStatus(nextJob));
+
+      if (nextJob.status === "succeeded") {
+        return nextJob;
+      }
+      if (nextJob.status === "failed") {
+        throw new Error(nextJob.error || `${nextJob.label} failed`);
+      }
+    }
+  }, []);
+
   const handleSync = useCallback(async () => {
     setActionBusy(true);
+    setActionJob(null);
     setError(null);
-    setStatus("Syncing recent USGS feed...");
+    setStatus("Starting sync...");
     try {
-      const summary = await syncData("2.5_day");
-      setStatus(`Sync completed: fetched ${summary.fetched}, processed ${summary.processed}, skipped ${summary.skipped}, errors ${summary.errors}.`);
+      const started = await syncData("2.5_day");
+      setActionJob(started.status);
+      setStatus(formatJobStatus(started.status));
+      const job = await waitForJob(started.jobId);
+      setStatus(formatCompletedJob(job));
       await refreshAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setActionBusy(false);
     }
-  }, [refreshAll]);
+  }, [refreshAll, waitForJob]);
 
   const handleImport = useCallback(async () => {
     setActionBusy(true);
+    setActionJob(null);
     setError(null);
-    setStatus("Importing 10 years of USGS history...");
+    setStatus("Starting history import...");
     try {
-      const summary = await importHistory(3650, 2.5, 30);
-      setStatus(`History import completed: chunks ${summary.chunks || 0}, fetched ${summary.fetched}, processed ${summary.processed}, skipped ${summary.skipped}, errors ${summary.errors}.`);
+      const started = await importHistory(3650, 2.5, 30);
+      setActionJob(started.status);
+      setStatus(formatJobStatus(started.status));
+      const job = await waitForJob(started.jobId);
+      setStatus(formatCompletedJob(job));
       await refreshAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Historical import failed");
     } finally {
       setActionBusy(false);
     }
-  }, [refreshAll]);
+  }, [refreshAll, waitForJob]);
 
   const busy = summaryBusy || mapBusy || actionBusy;
 
   return {
     actionBusy,
+    actionJob,
     analytics,
     applyFilters,
     busy,
@@ -148,4 +175,24 @@ export function useDashboardData() {
     status,
     summaryBusy
   };
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function formatJobStatus(job: ImportJobStatus) {
+  const progress = Math.round(job.progress);
+  const step =
+    job.totalSteps > 0
+      ? ` ${job.currentStep.toLocaleString()}/${job.totalSteps.toLocaleString()}`
+      : "";
+  return `${job.label}: ${progress}%${step} - ${job.message}`;
+}
+
+function formatCompletedJob(job: ImportJobStatus) {
+  const summary = job.summary;
+  return `${job.label} completed: fetched ${summary.fetched.toLocaleString()}, processed ${summary.processed.toLocaleString()}, skipped ${summary.skipped.toLocaleString()}, errors ${summary.errors.toLocaleString()}.`;
 }

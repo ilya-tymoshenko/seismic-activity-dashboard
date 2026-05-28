@@ -36,7 +36,8 @@ func main() {
 	repo := repository.NewEarthquakeRepository(sqlDB)
 	usgsClient := usgs.NewClient(cfg.HTTPTimeout)
 	importer := usgs.NewImporter(usgsClient, repo)
-	handler := handlers.New(repo, importer, cfg)
+	importJobs := jobs.NewImportJobManager(ctx, importer)
+	handler := handlers.New(repo, importer, importJobs, cfg)
 	jobs.NewUSGSRunner(cfg, repo, importer).Start(ctx)
 
 	router := gin.Default()

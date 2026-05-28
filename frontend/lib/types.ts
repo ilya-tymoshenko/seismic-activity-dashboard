@@ -93,3 +93,29 @@ export type ImportSummary = {
   skipped: number;
   errors: number;
 };
+
+export type ImportJobStatus = {
+  id: string;
+  kind: "sync" | "history";
+  label: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  message: string;
+  params: {
+    feed?: string;
+    days?: number;
+    minMagnitude?: number;
+    chunkDays?: number;
+  };
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  summary: ImportSummary;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+};
+
+export type ImportJobStartResponse = {
+  jobId: string;
+  status: ImportJobStatus;
+};

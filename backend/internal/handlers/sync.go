@@ -1,19 +1,26 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
+
+	"earthquake-big-data/backend/internal/jobs"
+	"earthquake-big-data/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) Sync(c *gin.Context) {
 	feed := c.DefaultQuery("feed", h.cfg.USGSSyncFeed)
-	summary, err := h.importer.SyncFeed(c.Request.Context(), feed)
+	status, err := h.importJobs.StartSync(feed)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, summary)
+	c.JSON(http.StatusAccepted, models.ImportJobStartResponse{
+		JobID:  status.ID,
+		Status: status,
+	})
 }
 
 func (h *Handler) ImportHistory(c *gin.Context) {
@@ -33,13 +40,26 @@ func (h *Handler) ImportHistory(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.importer.ImportHistory(c.Request.Context(), days, minMagnitude, chunkDays)
+	status, err := h.importJobs.StartHistory(days, minMagnitude, chunkDays)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":   err.Error(),
-			"summary": summary,
-		})
+		if errors.Is(err, jobs.ErrImportJobAlreadyActive) {
+			c.JSON(http.StatusConflict, gin.H{"error": "history import is already running with different parameters"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, summary)
+	c.JSON(http.StatusAccepted, models.ImportJobStartResponse{
+		JobID:  status.ID,
+		Status: status,
+	})
+}
+
+func (h *Handler) ImportJob(c *gin.Context) {
+	status, ok := h.importJobs.Get(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, status)
 }

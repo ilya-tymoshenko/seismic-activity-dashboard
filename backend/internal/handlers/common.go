@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"earthquake-big-data/backend/internal/config"
+	"earthquake-big-data/backend/internal/jobs"
 	"earthquake-big-data/backend/internal/models"
 	"earthquake-big-data/backend/internal/repository"
 	usgsimport "earthquake-big-data/backend/internal/usgs"
@@ -17,13 +18,14 @@ import (
 )
 
 type Handler struct {
-	repo     *repository.EarthquakeRepository
-	importer *usgsimport.Importer
-	cfg      config.Config
+	repo       *repository.EarthquakeRepository
+	importer   *usgsimport.Importer
+	importJobs *jobs.ImportJobManager
+	cfg        config.Config
 }
 
-func New(repo *repository.EarthquakeRepository, importer *usgsimport.Importer, cfg config.Config) *Handler {
-	return &Handler{repo: repo, importer: importer, cfg: cfg}
+func New(repo *repository.EarthquakeRepository, importer *usgsimport.Importer, importJobs *jobs.ImportJobManager, cfg config.Config) *Handler {
+	return &Handler{repo: repo, importer: importer, importJobs: importJobs, cfg: cfg}
 }
 
 func (h *Handler) RegisterRoutes(router *gin.Engine) {
@@ -31,6 +33,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	api.GET("/health", h.Health)
 	api.POST("/sync", h.Sync)
 	api.POST("/import/history", h.ImportHistory)
+	api.GET("/jobs/:id", h.ImportJob)
 	api.GET("/earthquakes", h.Earthquakes)
 	api.GET("/stats", h.Stats)
 	api.GET("/analytics", h.Analytics)
