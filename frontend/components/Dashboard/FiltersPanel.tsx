@@ -28,7 +28,6 @@ export default function FiltersPanel({ filters, onChange, onApply, onReset }: Pr
           <SlidersHorizontal size={18} className="text-primary" />
           <CardTitle>Filters</CardTitle>
         </div>
-        <span className="rounded-full bg-secondary px-2 py-1 text-xs font-medium text-muted-foreground">bbox aware</span>
       </CardHeader>
 
       <CardContent className="space-y-4">
