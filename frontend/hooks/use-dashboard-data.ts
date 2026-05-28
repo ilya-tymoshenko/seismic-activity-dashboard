@@ -68,6 +68,10 @@ export function useDashboardData() {
       setClusters([]);
       return;
     }
+    if (!nextBounds) {
+      setClusters([]);
+      return;
+    }
     try {
       const response = await fetchClusters(filters, nextBounds);
       if (requestId === clusterRequestSeq.current) {
@@ -142,9 +146,9 @@ export function useDashboardData() {
   const handleImport = useCallback(async () => {
     setActionBusy(true);
     setError(null);
-    setStatus("Importing 365 days of USGS history...");
+    setStatus("Importing 10 years of USGS history...");
     try {
-      const summary = await importHistory(365, 2.5, 30);
+      const summary = await importHistory(3650, 2.5, 30);
       setStatus(`History import completed: chunks ${summary.chunks || 0}, fetched ${summary.fetched}, processed ${summary.processed}, skipped ${summary.skipped}, errors ${summary.errors}.`);
       await refreshAll();
     } catch (err) {

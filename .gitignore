@@ -1,0 +1,3 @@
+__pycache__/
+data/usgs_seed.geojson
+data/usgs_seed.geojson.tmp

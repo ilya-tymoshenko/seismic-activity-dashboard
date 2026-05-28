@@ -95,8 +95,12 @@ export function fetchClusters(filters: Filters, bounds?: Bounds) {
   if (bounds) {
     params.set("bbox", `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`);
   }
-  params.set("eps", "2.0");
+  params.set("mode", "hybrid");
+  params.set("eps", "1.0");
   params.set("minPoints", "10");
+  params.set("spatialEpsKm", "300");
+  params.set("depthScaleKm", "100");
+  params.set("magnitudeScale", "1");
   return request<ClustersResponse>(`/api/clusters?${params.toString()}`);
 }
 
@@ -106,7 +110,7 @@ export function syncData(feed = "2.5_day") {
   });
 }
 
-export function importHistory(days = 365, minMagnitude = 2.5, chunkDays = 30) {
+export function importHistory(days = 3650, minMagnitude = 2.5, chunkDays = 30) {
   const params = new URLSearchParams({
     days: String(days),
     minMagnitude: String(minMagnitude),

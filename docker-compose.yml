@@ -43,9 +43,15 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-earthquakes}?sslmode=disable
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       USGS_MIN_MAGNITUDE: ${USGS_MIN_MAGNITUDE:-2.5}
-      USGS_HISTORY_DAYS: ${USGS_HISTORY_DAYS:-365}
+      USGS_HISTORY_DAYS: ${USGS_HISTORY_DAYS:-3650}
       USGS_HISTORY_CHUNK_DAYS: ${USGS_HISTORY_CHUNK_DAYS:-30}
       USGS_SYNC_FEED: ${USGS_SYNC_FEED:-2.5_day}
+      USGS_SYNC_ENABLED: ${USGS_SYNC_ENABLED:-true}
+      USGS_SYNC_INTERVAL: ${USGS_SYNC_INTERVAL:-1h}
+      USGS_SEED_IMPORT_ENABLED: ${USGS_SEED_IMPORT_ENABLED:-true}
+      USGS_SEED_FILE: ${USGS_SEED_FILE:-/data/usgs_seed.geojson}
+    volumes:
+      - ./data:/data:ro
     ports:
       - "8080:8080"
 
