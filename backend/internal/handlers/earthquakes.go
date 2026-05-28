@@ -16,6 +16,9 @@ func (h *Handler) Earthquakes(c *gin.Context) {
 
 	data, err := h.repo.ListEarthquakes(c.Request.Context(), filters)
 	if err != nil {
+		if abortIfRequestCanceled(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

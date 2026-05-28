@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,7 +34,6 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	api.GET("/earthquakes", h.Earthquakes)
 	api.GET("/stats", h.Stats)
 	api.GET("/analytics", h.Analytics)
-	api.GET("/clusters", h.Clusters)
 }
 
 func parseFilters(c *gin.Context) (models.Filters, bool) {
@@ -167,6 +168,19 @@ func parseBBox(value string) (*models.BBox, error) {
 
 func abortBadRequest(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": message})
+}
+
+const statusClientClosedRequest = 499
+
+func abortIfRequestCanceled(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if c.Request.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		c.AbortWithStatus(statusClientClosedRequest)
+		return true
+	}
+	return false
 }
 
 type errMessage string

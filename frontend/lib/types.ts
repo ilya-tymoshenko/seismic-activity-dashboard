@@ -16,7 +16,6 @@ export type Filters = {
   alert?: string;
   type?: string;
   limit?: string;
-  showClusters?: boolean;
 };
 
 export type Earthquake = {
@@ -81,20 +80,6 @@ export type AnalyticsResponse = {
   magnitudeDistribution: CategoryCount[];
   depthDistribution: CategoryCount[];
   topPlaces: TopPlace[];
-};
-
-export type Cluster = {
-  clusterId: number;
-  eventCount: number;
-  avgMagnitude: number | null;
-  maxMagnitude: number | null;
-  avgDepth: number | null;
-  latitude: number;
-  longitude: number;
-};
-
-export type ClustersResponse = {
-  data: Cluster[];
 };
 
 export type ImportSummary = {

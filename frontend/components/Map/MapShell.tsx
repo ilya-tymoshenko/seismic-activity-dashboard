@@ -1,5 +1,5 @@
 import dynamic from "next/dynamic";
-import type { Bounds, Cluster, Earthquake } from "../../lib/types";
+import type { Bounds, Earthquake } from "../../lib/types";
 
 const EarthquakeMap = dynamic(() => import("./EarthquakeMap"), {
   ssr: false,
@@ -8,8 +8,6 @@ const EarthquakeMap = dynamic(() => import("./EarthquakeMap"), {
 
 type Props = {
   earthquakes: Earthquake[];
-  clusters: Cluster[];
-  showClusters: boolean;
   onBoundsChange: (bounds: Bounds) => void;
 };
 

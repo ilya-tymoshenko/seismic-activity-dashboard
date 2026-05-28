@@ -16,7 +16,7 @@ export default function HomePage() {
     <>
       <Head>
         <title>Global Seismic Activity Analytics</title>
-        <meta name="description" content="USGS earthquake analytics with PostGIS clusters" />
+        <meta name="description" content="USGS earthquake analytics with PostGIS and Metabase" />
       </Head>
       <AppLayout
         busy={dashboard.busy}
@@ -39,10 +39,8 @@ export default function HomePage() {
               <StrongestEventCard stats={dashboard.stats} />
             </div>
             <MapShell
-              clusters={dashboard.visibleClusters}
               earthquakes={dashboard.earthquakes}
               onBoundsChange={dashboard.setMapBounds}
-              showClusters={dashboard.showClusters}
             />
           </section>
 

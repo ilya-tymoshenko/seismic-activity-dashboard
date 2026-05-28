@@ -14,6 +14,9 @@ func (h *Handler) Stats(c *gin.Context) {
 
 	stats, err := h.repo.Stats(c.Request.Context(), filters)
 	if err != nil {
+		if abortIfRequestCanceled(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

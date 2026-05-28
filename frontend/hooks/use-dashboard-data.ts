@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   fetchAnalytics,
-  fetchClusters,
   fetchEarthquakes,
   fetchStats,
   importHistory,
   syncData
 } from "@/lib/api";
-import type { AnalyticsResponse, Bounds, Cluster, Earthquake, Filters, StatsResponse } from "@/lib/types";
+import type { AnalyticsResponse, Bounds, Earthquake, Filters, StatsResponse } from "@/lib/types";
 
 export const defaultFilters: Filters = {
   minMagnitude: "2.5",
-  limit: "1000",
-  showClusters: true
+  limit: "1000"
 };
 
 export function useDashboardData() {
@@ -22,13 +20,11 @@ export function useDashboardData() {
   const [earthquakes, setEarthquakes] = useState<Earthquake[]>([]);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
-  const [clusters, setClusters] = useState<Cluster[]>([]);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [mapBusy, setMapBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Dashboard ready. Sync or import USGS data to populate the database.");
-  const clusterRequestSeq = useRef(0);
 
   const loadSummary = useCallback(async (filters: Filters) => {
     setSummaryBusy(true);
@@ -62,35 +58,9 @@ export function useDashboardData() {
     }
   }, []);
 
-  const loadClusters = useCallback(async (filters: Filters, nextBounds?: Bounds) => {
-    const requestId = ++clusterRequestSeq.current;
-    if (!filters.showClusters) {
-      setClusters([]);
-      return;
-    }
-    if (!nextBounds) {
-      setClusters([]);
-      return;
-    }
-    try {
-      const response = await fetchClusters(filters, nextBounds);
-      if (requestId === clusterRequestSeq.current) {
-        setClusters(response.data);
-      }
-    } catch (err) {
-      if (requestId === clusterRequestSeq.current) {
-        setError(err instanceof Error ? err.message : "Failed to load clusters");
-      }
-    }
-  }, []);
-
   useEffect(() => {
     void loadSummary(appliedFilters);
   }, [appliedFilters, loadSummary]);
-
-  useEffect(() => {
-    void loadClusters(appliedFilters, bounds);
-  }, [appliedFilters, bounds, loadClusters]);
 
   useEffect(() => {
     void loadEarthquakes(appliedFilters, bounds);
@@ -123,10 +93,9 @@ export function useDashboardData() {
   const refreshAll = useCallback(async () => {
     await Promise.all([
       loadSummary(appliedFilters),
-      loadEarthquakes(appliedFilters, bounds),
-      loadClusters(appliedFilters, bounds)
+      loadEarthquakes(appliedFilters, bounds)
     ]);
-  }, [appliedFilters, bounds, loadClusters, loadEarthquakes, loadSummary]);
+  }, [appliedFilters, bounds, loadEarthquakes, loadSummary]);
 
   const handleSync = useCallback(async () => {
     setActionBusy(true);
@@ -158,8 +127,6 @@ export function useDashboardData() {
     }
   }, [refreshAll]);
 
-  const showClusters = Boolean(appliedFilters.showClusters);
-  const visibleClusters = useMemo(() => (showClusters ? clusters : []), [clusters, showClusters]);
   const busy = summaryBusy || mapBusy || actionBusy;
 
   return {
@@ -177,10 +144,8 @@ export function useDashboardData() {
     resetFilters,
     setDraftFilters,
     setMapBounds,
-    showClusters,
     stats,
     status,
-    summaryBusy,
-    visibleClusters
+    summaryBusy
   };
 }

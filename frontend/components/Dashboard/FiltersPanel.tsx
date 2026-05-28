@@ -91,14 +91,6 @@ export default function FiltersPanel({ filters, onChange, onApply, onReset }: Pr
             onCheckedChange={(checked) => update("tsunamiOnly", Boolean(checked))}
           />
         </ToggleRow>
-        <ToggleRow id="analytical-clusters-switch" label="Analytical clusters">
-          <Switch
-            id="analytical-clusters-switch"
-            aria-labelledby="analytical-clusters-switch-label"
-            checked={Boolean(filters.showClusters)}
-            onCheckedChange={(checked) => update("showClusters", Boolean(checked))}
-          />
-        </ToggleRow>
 
         <div className="grid grid-cols-2 gap-2 pt-2">
           <Button type="button" onClick={onApply}>

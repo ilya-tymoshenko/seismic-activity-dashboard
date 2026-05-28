@@ -2,22 +2,19 @@ import L from "leaflet";
 import { useCallback, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet.markercluster";
-import type { Bounds, Cluster, Earthquake } from "../../lib/types";
+import type { Bounds, Earthquake } from "../../lib/types";
 import { formatDateTime, formatNumber, magnitudeTone } from "../../lib/format";
 import { Card } from "@/components/ui/card";
-import ClusterLayer from "./ClusterLayer";
 
 type Props = {
   earthquakes: Earthquake[];
-  clusters: Cluster[];
-  showClusters: boolean;
   onBoundsChange: (bounds: Bounds) => void;
 };
 
-export default function EarthquakeMap({ earthquakes, clusters, showClusters, onBoundsChange }: Props) {
+export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
   return (
     <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[100%]">
-      <MapLegend showClusters={showClusters} />
+      <MapLegend />
       <MapContainer
         center={[20, 0]}
         className="z-0"
@@ -34,13 +31,12 @@ export default function EarthquakeMap({ earthquakes, clusters, showClusters, onB
         />
         <BoundsReporter onBoundsChange={onBoundsChange} />
         <MarkerClusterLayer earthquakes={earthquakes} />
-        {showClusters && <ClusterLayer clusters={clusters} />}
       </MapContainer>
     </Card>
   );
 }
 
-function MapLegend({ showClusters }: { showClusters: boolean }) {
+function MapLegend() {
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-[500] rounded-lg border bg-card/95 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
       <div className="mb-1 font-medium text-foreground">Magnitude</div>
@@ -50,7 +46,6 @@ function MapLegend({ showClusters }: { showClusters: boolean }) {
         <LegendDot color="#e15b42" label="5-6.9" />
         <LegendDot color="#b91c1c" label="7+" />
       </div>
-      {showClusters && <div className="mt-1 text-[11px]">Analytical clusters enabled</div>}
     </div>
   );
 }

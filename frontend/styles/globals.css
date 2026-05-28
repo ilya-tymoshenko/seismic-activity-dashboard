@@ -83,11 +83,6 @@ select {
   border-radius: 8px;
 }
 
-.cluster-overlay-label {
-  color: #17202a;
-  font-weight: 700;
-}
-
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);

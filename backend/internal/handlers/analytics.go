@@ -14,6 +14,9 @@ func (h *Handler) Analytics(c *gin.Context) {
 
 	analytics, err := h.repo.Analytics(c.Request.Context(), filters)
 	if err != nil {
+		if abortIfRequestCanceled(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

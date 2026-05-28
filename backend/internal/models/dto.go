@@ -2,14 +2,6 @@ package models
 
 import "time"
 
-const (
-	MaxClusterEps            = 10.0
-	MaxClusterMinPoints      = 500
-	MaxClusterSpatialEpsKm   = 1000.0
-	MaxClusterDepthScaleKm   = 1000.0
-	MaxClusterMagnitudeScale = 10.0
-)
-
 type Filters struct {
 	DateFrom     *time.Time
 	DateTo       *time.Time
@@ -81,29 +73,6 @@ type AnalyticsResponse struct {
 	MagnitudeDistribution []CategoryCount `json:"magnitudeDistribution"`
 	DepthDistribution     []CategoryCount `json:"depthDistribution"`
 	TopPlaces             []TopPlace      `json:"topPlaces"`
-}
-
-type Cluster struct {
-	ClusterID    int64    `json:"clusterId"`
-	EventCount   int64    `json:"eventCount"`
-	AvgMagnitude *float64 `json:"avgMagnitude"`
-	MaxMagnitude *float64 `json:"maxMagnitude"`
-	AvgDepth     *float64 `json:"avgDepth"`
-	Latitude     float64  `json:"latitude"`
-	Longitude    float64  `json:"longitude"`
-}
-
-type ClusterOptions struct {
-	Mode           string
-	Eps            float64
-	MinPoints      int
-	SpatialEpsKm   float64
-	DepthScaleKm   float64
-	MagnitudeScale float64
-}
-
-type ClustersResponse struct {
-	Data []Cluster `json:"data"`
 }
 
 type ImportSummary struct {
