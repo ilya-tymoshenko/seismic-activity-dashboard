@@ -3,25 +3,27 @@ package usgs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"earthquake-big-data/backend/internal/models"
 	"earthquake-big-data/backend/internal/repository"
 )
 
+const maxUSGSImportFeaturesPerRequest = 18000
+
 type Importer struct {
 	client *Client
 	repo   *repository.EarthquakeRepository
-	mu     sync.Mutex
+	lock   chan struct{}
 }
 
 type ProgressCallback func(models.ImportProgressUpdate)
 
 func NewImporter(client *Client, repo *repository.EarthquakeRepository) *Importer {
-	return &Importer{client: client, repo: repo}
+	return &Importer{client: client, repo: repo, lock: make(chan struct{}, 1)}
 }
 
 func (i *Importer) SyncFeed(ctx context.Context, feed string) (models.ImportSummary, error) {
@@ -34,8 +36,11 @@ func (i *Importer) SyncFeedWithProgress(ctx context.Context, feed string, progre
 		Message:  "Waiting for importer",
 	})
 
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	release, err := i.acquire(ctx)
+	if err != nil {
+		return models.ImportSummary{}, err
+	}
+	defer release()
 
 	report(progress, models.ImportProgressUpdate{
 		Progress: 5,
@@ -60,7 +65,7 @@ func (i *Importer) SyncFeedWithProgress(ctx context.Context, feed string, progre
 		},
 	})
 
-	summary := i.processCollection(ctx, collection, func(done int, total int, partial models.ImportSummary) {
+	summary, err := i.processCollection(ctx, collection, func(done int, total int, partial models.ImportSummary) {
 		partial.Source = "USGS"
 		partial.Feed = feed
 		report(progress, models.ImportProgressUpdate{
@@ -71,6 +76,11 @@ func (i *Importer) SyncFeedWithProgress(ctx context.Context, feed string, progre
 			Summary:     partial,
 		})
 	})
+	if err != nil {
+		summary.Source = "USGS"
+		summary.Feed = feed
+		return summary, err
+	}
 	summary.Source = "USGS"
 	summary.Feed = feed
 	report(progress, models.ImportProgressUpdate{
@@ -84,8 +94,11 @@ func (i *Importer) SyncFeedWithProgress(ctx context.Context, feed string, progre
 }
 
 func (i *Importer) ImportFile(ctx context.Context, path string) (models.ImportSummary, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	release, err := i.acquire(ctx)
+	if err != nil {
+		return models.ImportSummary{}, err
+	}
+	defer release()
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -112,8 +125,11 @@ func (i *Importer) ImportHistoryWithProgress(ctx context.Context, days int, minM
 		Message:  "Waiting for importer",
 	})
 
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	release, err := i.acquire(ctx)
+	if err != nil {
+		return models.ImportSummary{}, err
+	}
+	defer release()
 
 	if days <= 0 {
 		days = 365
@@ -125,10 +141,31 @@ func (i *Importer) ImportHistoryWithProgress(ctx context.Context, days int, minM
 }
 
 func (i *Importer) ImportRange(ctx context.Context, start time.Time, end time.Time, minMagnitude float64, chunkDays int) (models.ImportSummary, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	release, err := i.acquire(ctx)
+	if err != nil {
+		return models.ImportSummary{}, err
+	}
+	defer release()
 
 	return i.importRange(ctx, start, end, minMagnitude, chunkDays, nil)
+}
+
+func (i *Importer) ImportFiltersWithProgress(ctx context.Context, filters models.Filters, chunkDays int, progress ProgressCallback) (models.ImportSummary, error) {
+	report(progress, models.ImportProgressUpdate{
+		Progress: 0,
+		Message:  "Waiting for importer",
+	})
+
+	release, err := i.acquire(ctx)
+	if err != nil {
+		return models.ImportSummary{}, err
+	}
+	defer release()
+
+	if filters.DateFrom == nil || filters.DateTo == nil {
+		return models.ImportSummary{}, fmt.Errorf("dateFrom and dateTo are required for filtered USGS imports")
+	}
+	return i.importFilteredRange(ctx, filters, chunkDays, progress)
 }
 
 func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Time, minMagnitude float64, chunkDays int, progress ProgressCallback) (models.ImportSummary, error) {
@@ -165,6 +202,9 @@ func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Ti
 
 	for chunkStart := start; chunkStart.Before(end); {
 		chunkIndex := summary.Chunks
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
 		chunkEnd := chunkStart.AddDate(0, 0, chunkDays)
 		if chunkEnd.After(end) {
 			chunkEnd = end
@@ -180,6 +220,9 @@ func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Ti
 
 		collection, err := i.client.FetchHistoryChunk(ctx, chunkStart, chunkEnd, minMagnitude)
 		if err != nil {
+			if canceledErr := canceledContextError(ctx, err); canceledErr != nil {
+				return summary, canceledErr
+			}
 			summary.Errors++
 			report(progress, models.ImportProgressUpdate{
 				Progress:    progressForHistory(chunkIndex, 0, 0, totalChunks),
@@ -191,7 +234,7 @@ func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Ti
 			return summary, fmt.Errorf("fetch history chunk %s..%s: %w", chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), err)
 		}
 
-		chunkSummary := i.processCollection(ctx, collection, func(done int, total int, partial models.ImportSummary) {
+		chunkSummary, err := i.processCollection(ctx, collection, func(done int, total int, partial models.ImportSummary) {
 			combined := summary
 			combined.Fetched += partial.Fetched
 			combined.Processed += partial.Processed
@@ -205,6 +248,9 @@ func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Ti
 				Summary:     combined,
 			})
 		})
+		if err != nil {
+			return summary, err
+		}
 		summary.Fetched += chunkSummary.Fetched
 		summary.Processed += chunkSummary.Processed
 		summary.Skipped += chunkSummary.Skipped
@@ -237,24 +283,163 @@ func (i *Importer) importRange(ctx context.Context, start time.Time, end time.Ti
 	return summary, nil
 }
 
-func (i *Importer) ProcessCollection(ctx context.Context, collection models.USGSFeatureCollection) models.ImportSummary {
-	return i.processCollection(ctx, collection, nil)
+func (i *Importer) importFilteredRange(ctx context.Context, filters models.Filters, chunkDays int, progress ProgressCallback) (models.ImportSummary, error) {
+	start := filters.DateFrom.UTC()
+	end := filters.DateTo.UTC()
+	if !start.Before(end) {
+		return models.ImportSummary{}, fmt.Errorf("dateFrom must be earlier than dateTo")
+	}
+	if chunkDays <= 0 {
+		chunkDays = 30
+	}
+	totalDays := int(end.Sub(start).Hours() / 24)
+	if totalDays <= 0 {
+		totalDays = 1
+	}
+	if chunkDays > totalDays {
+		chunkDays = totalDays
+	}
+
+	summary := models.ImportSummary{
+		Source:       "USGS",
+		Feed:         "filtered",
+		Days:         totalDays,
+		MinMagnitude: valueOrZero(filters.MinMagnitude),
+	}
+	report(progress, models.ImportProgressUpdate{
+		Progress:    0,
+		Message:     "Counting matching USGS events",
+		CurrentStep: 0,
+		Summary:     summary,
+	})
+
+	ranges := make([]QueryRange, 0)
+	for chunkStart := start; chunkStart.Before(end); {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		chunkEnd := chunkStart.AddDate(0, 0, chunkDays)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+		queryFilters := queryFiltersFromDashboardFilters(filters, chunkStart, chunkEnd)
+		chunkRanges, err := i.client.SplitQueryRange(ctx, queryFilters, maxUSGSImportFeaturesPerRequest)
+		if err != nil {
+			if canceledErr := canceledContextError(ctx, err); canceledErr != nil {
+				return summary, canceledErr
+			}
+			summary.Errors++
+			return summary, fmt.Errorf("count filtered USGS chunk %s..%s: %w", chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), err)
+		}
+		ranges = append(ranges, chunkRanges...)
+		chunkStart = chunkEnd
+	}
+	summary.Chunks = len(ranges)
+
+	report(progress, models.ImportProgressUpdate{
+		Progress:    0,
+		Message:     fmt.Sprintf("Importing %d USGS ranges", len(ranges)),
+		CurrentStep: 0,
+		TotalSteps:  len(ranges),
+		Summary:     summary,
+	})
+
+	for index, queryRange := range ranges {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		step := index + 1
+		if queryRange.ExpectedCount == 0 {
+			report(progress, models.ImportProgressUpdate{
+				Progress:    progressForHistory(step, 0, 0, len(ranges)),
+				Message:     fmt.Sprintf("Skipped empty range %d/%d", step, len(ranges)),
+				CurrentStep: step,
+				TotalSteps:  len(ranges),
+				Summary:     summary,
+			})
+			continue
+		}
+
+		report(progress, models.ImportProgressUpdate{
+			Progress:    progressForHistory(index, 0, 0, len(ranges)),
+			Message:     fmt.Sprintf("Fetching range %d/%d: expected %d events", step, len(ranges), queryRange.ExpectedCount),
+			CurrentStep: step,
+			TotalSteps:  len(ranges),
+			Summary:     summary,
+		})
+
+		collection, err := i.client.FetchQuery(ctx, queryRange.Filters, maxUSGSImportFeaturesPerRequest)
+		if err != nil {
+			if canceledErr := canceledContextError(ctx, err); canceledErr != nil {
+				return summary, canceledErr
+			}
+			summary.Errors++
+			return summary, fmt.Errorf("fetch filtered USGS range %s..%s: %w", formatUSGSTime(queryRange.Filters.StartTime), formatUSGSTime(queryRange.Filters.EndTime), err)
+		}
+		if len(collection.Features) != queryRange.ExpectedCount {
+			summary.Errors++
+			return summary, fmt.Errorf("USGS range response incomplete for %s..%s: expected=%d fetched=%d", formatUSGSTime(queryRange.Filters.StartTime), formatUSGSTime(queryRange.Filters.EndTime), queryRange.ExpectedCount, len(collection.Features))
+		}
+		collection = filterCollectionForQuery(collection, queryRange.Filters)
+
+		rangeSummary, err := i.processCollection(ctx, collection, func(done int, total int, partial models.ImportSummary) {
+			combined := summary
+			combined.Fetched += partial.Fetched
+			combined.Processed += partial.Processed
+			combined.Skipped += partial.Skipped
+			combined.Errors += partial.Errors
+			report(progress, models.ImportProgressUpdate{
+				Progress:    progressForHistory(index, done, total, len(ranges)),
+				Message:     fmt.Sprintf("Processing range %d/%d: %d/%d events", step, len(ranges), done, total),
+				CurrentStep: step,
+				TotalSteps:  len(ranges),
+				Summary:     combined,
+			})
+		})
+		if err != nil {
+			return summary, err
+		}
+		summary.Fetched += rangeSummary.Fetched
+		summary.Processed += rangeSummary.Processed
+		summary.Skipped += rangeSummary.Skipped
+		summary.Errors += rangeSummary.Errors
+		report(progress, models.ImportProgressUpdate{
+			Progress:    progressForHistory(step, 0, 0, len(ranges)),
+			Message:     fmt.Sprintf("Completed range %d/%d", step, len(ranges)),
+			CurrentStep: step,
+			TotalSteps:  len(ranges),
+			Summary:     summary,
+		})
+	}
+
+	report(progress, models.ImportProgressUpdate{
+		Progress:    100,
+		Message:     "Filtered import complete",
+		CurrentStep: len(ranges),
+		TotalSteps:  len(ranges),
+		Summary:     summary,
+	})
+	return summary, nil
 }
 
-func (i *Importer) processCollection(ctx context.Context, collection models.USGSFeatureCollection, progress func(done int, total int, summary models.ImportSummary)) models.ImportSummary {
+func (i *Importer) ProcessCollection(ctx context.Context, collection models.USGSFeatureCollection) models.ImportSummary {
+	summary, _ := i.processCollection(ctx, collection, nil)
+	return summary
+}
+
+func (i *Importer) processCollection(ctx context.Context, collection models.USGSFeatureCollection, progress func(done int, total int, summary models.ImportSummary)) (models.ImportSummary, error) {
 	summary := models.ImportSummary{
 		Fetched: len(collection.Features),
 	}
 	total := len(collection.Features)
 	if total == 0 {
 		reportCollectionProgress(progress, 0, total, summary)
-		return summary
+		return summary, nil
 	}
 	for index, feature := range collection.Features {
 		if err := ctx.Err(); err != nil {
-			summary.Errors++
 			reportCollectionProgress(progress, index+1, total, summary)
-			return summary
+			return summary, err
 		}
 		i.processFeature(ctx, feature, &summary)
 		done := index + 1
@@ -262,7 +447,7 @@ func (i *Importer) processCollection(ctx context.Context, collection models.USGS
 			reportCollectionProgress(progress, done, total, summary)
 		}
 	}
-	return summary
+	return summary, nil
 }
 
 func (i *Importer) processFeatureCollectionStream(ctx context.Context, decoder *json.Decoder) (models.ImportSummary, error) {
@@ -414,4 +599,62 @@ func countRangeChunks(start time.Time, end time.Time, chunkDays int) int {
 		chunkStart = chunkEnd
 	}
 	return chunks
+}
+
+func (i *Importer) acquire(ctx context.Context) (func(), error) {
+	select {
+	case i.lock <- struct{}{}:
+		return func() {
+			<-i.lock
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func queryFiltersFromDashboardFilters(filters models.Filters, start time.Time, end time.Time) QueryFilters {
+	return QueryFilters{
+		StartTime:    start,
+		EndTime:      end,
+		MinMagnitude: filters.MinMagnitude,
+		MaxMagnitude: filters.MaxMagnitude,
+		MinDepth:     filters.MinDepth,
+		MaxDepth:     filters.MaxDepth,
+		BBox:         filters.BBox,
+		Alert:        filters.Alert,
+		EventType:    filters.Type,
+		Tsunami:      filters.Tsunami,
+	}
+}
+
+func filterCollectionForQuery(collection models.USGSFeatureCollection, filters QueryFilters) models.USGSFeatureCollection {
+	if filters.Tsunami == nil {
+		return collection
+	}
+
+	filtered := collection
+	filtered.Features = make([]models.USGSFeature, 0, len(collection.Features))
+	for _, feature := range collection.Features {
+		if feature.Properties.Tsunami == *filters.Tsunami {
+			filtered.Features = append(filtered.Features, feature)
+		}
+	}
+	return filtered
+}
+
+func valueOrZero(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func canceledContextError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return nil
 }

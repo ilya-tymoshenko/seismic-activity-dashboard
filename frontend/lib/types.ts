@@ -96,15 +96,28 @@ export type ImportSummary = {
 
 export type ImportJobStatus = {
   id: string;
-  kind: "sync" | "history";
+  kind: "sync" | "history" | "filter";
   label: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
   message: string;
   params: {
     feed?: string;
+    dateFrom?: string;
+    dateTo?: string;
     days?: number;
     minMagnitude?: number;
+    maxMagnitude?: number;
+    minDepth?: number;
+    maxDepth?: number;
     chunkDays?: number;
+    alert?: string;
+    type?: string;
+    tsunami?: number;
+    tsunamiOnly?: boolean;
+    bboxMinLon?: number;
+    bboxMinLat?: number;
+    bboxMaxLon?: number;
+    bboxMaxLat?: number;
   };
   progress: number;
   currentStep: number;

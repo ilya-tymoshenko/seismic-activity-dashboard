@@ -34,6 +34,30 @@ function buildQuery(filters: Filters = {}, bounds?: Bounds): string {
   return query ? `?${query}` : "";
 }
 
+function buildImportFilterQuery(filters: Filters, bounds?: Bounds, chunkDays = 30): string {
+  const params = new URLSearchParams();
+
+  add(params, "dateFrom", filters.dateFrom);
+  add(params, "dateTo", filters.dateTo);
+  add(params, "minMagnitude", filters.minMagnitude);
+  add(params, "maxMagnitude", filters.maxMagnitude);
+  add(params, "minDepth", filters.minDepth);
+  add(params, "maxDepth", filters.maxDepth);
+  add(params, "alert", filters.alert);
+  add(params, "type", filters.type);
+  params.set("chunkDays", String(chunkDays));
+
+  if (filters.tsunamiOnly) {
+    params.set("tsunami", "1");
+  }
+  if (bounds) {
+    params.set("bbox", `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 function add(params: URLSearchParams, key: string, value?: string) {
   if (value && value.trim() !== "") {
     params.set(key, value.trim());
@@ -94,6 +118,18 @@ export function importHistory(days = 3650, minMagnitude = 2.5, chunkDays = 30) {
   });
 }
 
+export function importFilteredData(filters: Filters, bounds?: Bounds, chunkDays = 30) {
+  return request<ImportJobStartResponse>(`/api/import/filter${buildImportFilterQuery(filters, bounds, chunkDays)}`, {
+    method: "POST"
+  });
+}
+
 export function fetchImportJob(jobId: string) {
   return request<ImportJobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function cancelImportJob(jobId: string) {
+  return request<ImportJobStatus>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST"
+  });
 }

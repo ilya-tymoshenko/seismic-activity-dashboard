@@ -117,8 +117,26 @@ type ImportJobStartResponse struct {
 }
 
 type ImportJobParams struct {
-	Feed         string  `json:"feed,omitempty"`
-	Days         int     `json:"days,omitempty"`
-	MinMagnitude float64 `json:"minMagnitude,omitempty"`
-	ChunkDays    int     `json:"chunkDays,omitempty"`
+	Feed            string  `json:"feed,omitempty"`
+	DateFrom        string  `json:"dateFrom,omitempty"`
+	DateTo          string  `json:"dateTo,omitempty"`
+	Days            int     `json:"days,omitempty"`
+	MinMagnitude    float64 `json:"minMagnitude,omitempty"`
+	HasMinMagnitude bool    `json:"-"`
+	MaxMagnitude    float64 `json:"maxMagnitude,omitempty"`
+	HasMaxMagnitude bool    `json:"-"`
+	MinDepth        float64 `json:"minDepth,omitempty"`
+	HasMinDepth     bool    `json:"-"`
+	MaxDepth        float64 `json:"maxDepth,omitempty"`
+	HasMaxDepth     bool    `json:"-"`
+	ChunkDays       int     `json:"chunkDays,omitempty"`
+	Alert           string  `json:"alert,omitempty"`
+	Type            string  `json:"type,omitempty"`
+	Tsunami         *int    `json:"tsunami,omitempty"`
+	TsunamiOnly     bool    `json:"tsunamiOnly,omitempty"`
+	BBoxMinLon      float64 `json:"bboxMinLon,omitempty"`
+	BBoxMinLat      float64 `json:"bboxMinLat,omitempty"`
+	BBoxMaxLon      float64 `json:"bboxMaxLon,omitempty"`
+	BBoxMaxLat      float64 `json:"bboxMaxLat,omitempty"`
+	HasBBox         bool    `json:"-"`
 }

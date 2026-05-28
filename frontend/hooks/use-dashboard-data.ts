@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  cancelImportJob,
   fetchAnalytics,
   fetchEarthquakes,
   fetchImportJob,
   fetchStats,
+  importFilteredData,
   importHistory,
   syncData
 } from "@/lib/api";
@@ -109,6 +111,9 @@ export function useDashboardData() {
       if (nextJob.status === "succeeded") {
         return nextJob;
       }
+      if (nextJob.status === "canceled") {
+        return nextJob;
+      }
       if (nextJob.status === "failed") {
         throw new Error(nextJob.error || `${nextJob.label} failed`);
       }
@@ -125,7 +130,7 @@ export function useDashboardData() {
       setActionJob(started.status);
       setStatus(formatJobStatus(started.status));
       const job = await waitForJob(started.jobId);
-      setStatus(formatCompletedJob(job));
+      setStatus(formatTerminalJob(job));
       await refreshAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
@@ -144,7 +149,7 @@ export function useDashboardData() {
       setActionJob(started.status);
       setStatus(formatJobStatus(started.status));
       const job = await waitForJob(started.jobId);
-      setStatus(formatCompletedJob(job));
+      setStatus(formatTerminalJob(job));
       await refreshAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Historical import failed");
@@ -152,6 +157,48 @@ export function useDashboardData() {
       setActionBusy(false);
     }
   }, [refreshAll, waitForJob]);
+
+  const handleImportFiltered = useCallback(async () => {
+    if (!draftFilters.dateFrom || !draftFilters.dateTo) {
+      setError("Date from and Date to are required to load filtered USGS data");
+      return;
+    }
+    setActionBusy(true);
+    setActionJob(null);
+    setError(null);
+    setStatus("Starting filtered USGS import...");
+    try {
+      const nextFilters = { ...draftFilters };
+      setAppliedFilters(nextFilters);
+      const started = await importFilteredData(nextFilters, bounds, 30);
+      setActionJob(started.status);
+      setStatus(formatJobStatus(started.status));
+      const job = await waitForJob(started.jobId);
+      setStatus(formatTerminalJob(job));
+      await Promise.all([
+        loadSummary(nextFilters),
+        loadEarthquakes(nextFilters, bounds)
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Filtered USGS import failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }, [bounds, draftFilters, loadEarthquakes, loadSummary, waitForJob]);
+
+  const handleCancelAction = useCallback(async () => {
+    if (!actionJob || !isActiveJob(actionJob)) {
+      return;
+    }
+    setError(null);
+    try {
+      const canceled = await cancelImportJob(actionJob.id);
+      setActionJob(canceled);
+      setStatus(formatJobStatus(canceled));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cancel failed");
+    }
+  }, [actionJob]);
 
   const busy = summaryBusy || mapBusy || actionBusy;
 
@@ -165,6 +212,8 @@ export function useDashboardData() {
     earthquakeCount: earthquakes.length,
     earthquakes,
     error,
+    handleCancelAction,
+    handleImportFiltered,
     handleImport,
     handleSync,
     mapBusy,
@@ -192,7 +241,14 @@ function formatJobStatus(job: ImportJobStatus) {
   return `${job.label}: ${progress}%${step} - ${job.message}`;
 }
 
-function formatCompletedJob(job: ImportJobStatus) {
+function formatTerminalJob(job: ImportJobStatus) {
   const summary = job.summary;
+  if (job.status === "canceled") {
+    return `${job.label} canceled: fetched ${summary.fetched.toLocaleString()}, processed ${summary.processed.toLocaleString()}, skipped ${summary.skipped.toLocaleString()}, errors ${summary.errors.toLocaleString()}.`;
+  }
   return `${job.label} completed: fetched ${summary.fetched.toLocaleString()}, processed ${summary.processed.toLocaleString()}, skipped ${summary.skipped.toLocaleString()}, errors ${summary.errors.toLocaleString()}.`;
+}
+
+function isActiveJob(job: ImportJobStatus) {
+  return job.status === "queued" || job.status === "running" || job.status === "canceling";
 }

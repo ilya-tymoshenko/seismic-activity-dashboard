@@ -23,6 +23,7 @@ export default function HomePage() {
         error={dashboard.error}
         actionJob={dashboard.actionJob}
         status={dashboard.status}
+        onCancelAction={dashboard.handleCancelAction}
         onImport={dashboard.handleImport}
         onSync={dashboard.handleSync}
       >
@@ -33,8 +34,10 @@ export default function HomePage() {
             <div className="space-y-4">
               <FiltersPanel
                 filters={dashboard.draftFilters}
+                busy={dashboard.actionBusy}
                 onApply={dashboard.applyFilters}
                 onChange={dashboard.setDraftFilters}
+                onImportFiltered={dashboard.handleImportFiltered}
                 onReset={dashboard.resetFilters}
               />
               <StrongestEventCard stats={dashboard.stats} />

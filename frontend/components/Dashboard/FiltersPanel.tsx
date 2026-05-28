@@ -1,4 +1,4 @@
-import { Filter, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Download, Filter, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Filters } from "../../lib/types";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,12 @@ type Props = {
   filters: Filters;
   onChange: (filters: Filters) => void;
   onApply: () => void;
+  onImportFiltered: () => void;
   onReset: () => void;
+  busy?: boolean;
 };
 
-export default function FiltersPanel({ filters, onChange, onApply, onReset }: Props) {
+export default function FiltersPanel({ filters, onChange, onApply, onImportFiltered, onReset, busy }: Props) {
   const update = (key: keyof Filters, value: string | boolean) => {
     onChange({ ...filters, [key]: value });
   };
@@ -93,15 +95,19 @@ export default function FiltersPanel({ filters, onChange, onApply, onReset }: Pr
         </ToggleRow>
 
         <div className="grid grid-cols-2 gap-2 pt-2">
-          <Button type="button" onClick={onApply}>
+          <Button type="button" disabled={busy} onClick={onApply}>
             <Filter size={16} />
             Apply
           </Button>
-          <Button type="button" variant="outline" onClick={onReset}>
+          <Button type="button" variant="outline" disabled={busy} onClick={onReset}>
             <RotateCcw size={16} />
             Reset
           </Button>
         </div>
+        <Button className="w-full" type="button" variant="secondary" disabled={busy} onClick={onImportFiltered}>
+          <Download size={16} />
+          Load Filter Data
+        </Button>
       </CardContent>
     </Card>
   );

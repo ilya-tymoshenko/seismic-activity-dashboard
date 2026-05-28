@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Database, RefreshCw } from "lucide-react";
+import { Activity, BarChart3, CircleStop, Database, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -15,9 +15,10 @@ type Props = {
   actionJob?: ImportJobStatus | null;
   onSync: () => void;
   onImport: () => void;
+  onCancelAction: () => void;
 };
 
-export default function AppLayout({ children, busy, status, error, actionJob, onSync, onImport }: Props) {
+export default function AppLayout({ children, busy, status, error, actionJob, onSync, onImport, onCancelAction }: Props) {
   const metabaseUrl = process.env.NEXT_PUBLIC_METABASE_URL || "http://localhost:3001";
   const activeActionJob = actionJob && isActiveActionJob(actionJob) ? actionJob : null;
 
@@ -69,7 +70,7 @@ export default function AppLayout({ children, busy, status, error, actionJob, on
                 Open Metabase
               </a>
             </div>
-            {activeActionJob && <ActionProgress job={activeActionJob} />}
+            {activeActionJob && <ActionProgress job={activeActionJob} onCancel={onCancelAction} />}
             <Separator className="hidden h-8 lg:block" orientation="vertical" />
             <Alert className={cn("min-w-[280px] max-w-xl py-2", error && "border-destructive/40")} variant={error ? "destructive" : "default"}>
               <AlertDescription className="line-clamp-2">
@@ -84,18 +85,31 @@ export default function AppLayout({ children, busy, status, error, actionJob, on
   );
 }
 
-function ActionProgress({ job }: { job: ImportJobStatus }) {
+function ActionProgress({ job, onCancel }: { job: ImportJobStatus; onCancel: () => void }) {
   const progress = Math.round(job.progress);
   const stepText = job.totalSteps > 0
     ? `${job.currentStep.toLocaleString()}/${job.totalSteps.toLocaleString()}`
     : "";
+  const canceling = job.status === "canceling";
 
   return (
     <div className="min-w-[260px] max-w-sm space-y-1">
-      <Progress value={progress}>
-        <ProgressLabel className="text-xs">{job.label}</ProgressLabel>
-        <span className="ml-auto text-xs text-muted-foreground tabular-nums">{progress}%</span>
-      </Progress>
+      <div className="flex items-center gap-2">
+        <Progress value={progress}>
+          <ProgressLabel className="text-xs">{job.label}</ProgressLabel>
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{progress}%</span>
+        </Progress>
+        <Button
+          size="icon-xs"
+          type="button"
+          variant="destructive"
+          disabled={canceling}
+          onClick={onCancel}
+          title={canceling ? "Cancel requested" : "Cancel job"}
+        >
+          <CircleStop size={14} />
+        </Button>
+      </div>
       <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
         <span className="truncate">{job.message}</span>
         {stepText && <span className="shrink-0 tabular-nums">{stepText}</span>}
@@ -105,5 +119,5 @@ function ActionProgress({ job }: { job: ImportJobStatus }) {
 }
 
 function isActiveActionJob(job: ImportJobStatus) {
-  return job.status === "queued" || job.status === "running";
+  return job.status === "queued" || job.status === "running" || job.status === "canceling";
 }
