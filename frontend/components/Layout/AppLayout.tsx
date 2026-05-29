@@ -30,10 +30,7 @@ export default function AppLayout({ children, busy, status, error, actionJob, on
             <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-destructive text-destructive-foreground shadow-sm">
               <Activity size={22} />
             </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold tracking-normal text-foreground md:text-2xl">Global Seismic Activity Analytics</h1>
-              <p className="text-sm text-muted-foreground">USGS Earthquake Catalog + PostGIS + Metabase</p>
-            </div>
+            <h1 className="truncate text-xl font-semibold tracking-normal text-foreground md:text-2xl">Global Seismic Activity Analytics</h1>
           </div>
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
