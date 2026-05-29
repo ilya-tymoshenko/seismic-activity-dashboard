@@ -344,7 +344,14 @@ function CanvasMarkerLayer({
       const clusters = nextItems.filter((item) => item.kind === "cluster") as DrawnCluster[];
 
       for (const item of singles) {
-        drawMarker(context, item.x, item.y, item.radius, magnitudeTone(item.earthquake.magnitude));
+        drawMarker(
+          context,
+          item.x,
+          item.y,
+          item.radius,
+          magnitudeTone(item.earthquake.magnitude),
+          item.earthquake.tsunami === 1
+        );
       }
       for (const item of clusters) {
         drawCluster(context, item);
@@ -622,7 +629,17 @@ function markerRadius(magnitude: number | null) {
   return Math.max(4, Math.min(14, 4 + (magnitude || 1.5) * 1.5));
 }
 
-function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string) {
+function drawMarker(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  color: string,
+  isTsunami: boolean
+) {
+  if (isTsunami) {
+    drawWavyHalo(context, x, y, radius + 6, 6, 2.2, "rgba(14, 116, 144, 0.85)");
+  }
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
   context.fillStyle = color;
@@ -635,6 +652,34 @@ function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, rad
   context.arc(x, y, Math.max(1.75, radius * 0.28), 0, Math.PI * 2);
   context.fillStyle = "rgba(255, 255, 255, 0.86)";
   context.fill();
+}
+
+function drawWavyHalo(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  baseRadius: number,
+  waves: number,
+  amplitude: number,
+  color: string
+) {
+  const steps = Math.max(48, waves * 24);
+  context.beginPath();
+  for (let i = 0; i <= steps; i += 1) {
+    const t = (i / steps) * Math.PI * 2;
+    const r = baseRadius + Math.sin(t * waves) * amplitude;
+    const px = x + Math.cos(t) * r;
+    const py = y + Math.sin(t) * r;
+    if (i === 0) {
+      context.moveTo(px, py);
+    } else {
+      context.lineTo(px, py);
+    }
+  }
+  context.closePath();
+  context.lineWidth = 2;
+  context.strokeStyle = color;
+  context.stroke();
 }
 
 function clusterVisiblePoints(points: DrawnPoint[], zoom: number, renderLimit?: number): DrawnItem[] {
