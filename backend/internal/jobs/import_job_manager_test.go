@@ -246,3 +246,31 @@ func TestCancelActiveJobUpdatesStatusAndCallsCancel(t *testing.T) {
 		t.Fatalf("expected canceling status, got %q", status.Status)
 	}
 }
+
+func TestFinishPreservesCancelingStatus(t *testing.T) {
+	manager := &ImportJobManager{
+		jobs: make(map[string]*importJobRecord),
+	}
+	manager.jobs["sync"] = &importJobRecord{
+		status: models.ImportJobStatus{
+			ID:        "sync",
+			Kind:      "sync",
+			Status:    importJobStatusCanceling,
+			StartedAt: time.Now().UTC(),
+		},
+		cancel: func() {},
+	}
+
+	manager.finish("sync", models.ImportSummary{Processed: 10}, nil)
+
+	status, ok := manager.Get("sync")
+	if !ok {
+		t.Fatalf("expected job to exist")
+	}
+	if status.Status != importJobStatusCanceled {
+		t.Fatalf("expected canceled status, got %q", status.Status)
+	}
+	if status.Message != "Canceled" {
+		t.Fatalf("expected canceled message, got %q", status.Message)
+	}
+}

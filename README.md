@@ -46,10 +46,31 @@ On first startup the backend imports the local seed file from `USGS_SEED_FILE` (
 
 ## Metabase login
 Metabase is bootstrapped automatically on an empty volume.
-It creates the admin user, the PostgreSQL connection, and the `Earthquake BI Overview` dashboard.
+It creates the admin user, the PostgreSQL connection, and several ready-to-use BI dashboards:
+
+- `Earthquake BI Overview`: KPI counters, daily activity, magnitude/depth distribution, strongest events, active places.
+- `Earthquake Temporal Trends`: yearly/monthly trends, significant events, event type distribution.
+- `Earthquake Risk Monitor`: alert levels, tsunami activity, high-risk events, depth/magnitude matrix.
+- `Earthquake Geographic Hotspots`: hotspot maps, high-risk event map, regional grid, active places, strongest location table.
+- `Earthquake Data Coverage & Quality`: coverage, missing fields, ingestion recency, magnitude thresholds, import state.
+
+The analytical dashboards include global filters for date, magnitude, depth, alert level, event type, and tsunami flag. BI materialized views are refreshed after seed import, manual imports, and scheduled syncs.
+Metabase stores its own application state in the dedicated `metabase-db` PostgreSQL service.
 
 - Email: admin@example.com
 - Password: admin12345
+
+### Migrating an existing local Metabase H2 volume
+Older local versions stored Metabase state in the `metabase-data` H2 volume. To preserve existing Metabase users, credentials, and custom dashboards before switching to the PostgreSQL-backed Metabase app DB, back up that volume first, then run:
+
+```bash
+docker compose stop metabase
+docker compose --profile tools run --rm metabase-migrate-h2
+docker compose up -d metabase metabase-setup
+```
+
+Run the migration before bootstrapping a fresh `metabase-pgdata` volume. If a fresh PostgreSQL Metabase DB was already initialized accidentally, remove that new volume first or keep using the new clean Metabase state.
+The migration container mounts `metabase-data` read-write because Metabase's H2 loader creates lock/trace files next to `metabase.db`.
 
 ## Metabase connection
 - Host: postgres

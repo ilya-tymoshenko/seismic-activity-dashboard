@@ -139,8 +139,20 @@ func (r *USGSRunner) runSyncLoop(ctx context.Context) {
 
 func (r *USGSRunner) syncOnce(ctx context.Context, reason string) {
 	summary, err := r.importer.SyncFeed(ctx, r.cfg.USGSSyncFeed)
+	if refreshErr := r.refreshBIAfterImport(summary, err); refreshErr != nil {
+		log.Printf("USGS %s sync BI refresh failed: %v", reason, refreshErr)
+	}
 	if err != nil {
-		log.Printf("USGS %s sync failed: %v", reason, err)
+		log.Printf(
+			"USGS %s sync failed: feed=%s fetched=%d processed=%d skipped=%d errors=%d error=%v",
+			reason,
+			r.cfg.USGSSyncFeed,
+			summary.Fetched,
+			summary.Processed,
+			summary.Skipped,
+			summary.Errors,
+			err,
+		)
 		return
 	}
 	log.Printf(
@@ -152,6 +164,18 @@ func (r *USGSRunner) syncOnce(ctx context.Context, reason string) {
 		summary.Skipped,
 		summary.Errors,
 	)
+}
+
+func (r *USGSRunner) refreshBIAfterImport(summary models.ImportSummary, importErr error) error {
+	if importErr != nil && summary.Processed == 0 {
+		return nil
+	}
+	refreshCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := r.repo.RefreshBIMaterializedViews(refreshCtx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func fileSHA256(path string) (string, error) {

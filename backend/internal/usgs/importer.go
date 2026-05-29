@@ -27,6 +27,10 @@ func NewImporter(client *Client, repo *repository.EarthquakeRepository) *Importe
 	return &Importer{client: client, repo: repo, lock: make(chan struct{}, 1)}
 }
 
+func (i *Importer) RefreshBIMaterializedViews(ctx context.Context) error {
+	return i.repo.RefreshBIMaterializedViews(ctx)
+}
+
 func (i *Importer) SyncFeed(ctx context.Context, feed string) (models.ImportSummary, error) {
 	return i.SyncFeedWithProgress(ctx, feed, nil)
 }

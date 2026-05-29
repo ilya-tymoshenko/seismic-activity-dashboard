@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"time"
 
 	"earthquake-big-data/backend/internal/config"
 	dbconn "earthquake-big-data/backend/internal/db"
@@ -30,10 +31,22 @@ func main() {
 	repo := repository.NewEarthquakeRepository(sqlDB)
 	client := usgs.NewClient(cfg.HTTPTimeout)
 	importer := usgs.NewImporter(client, repo)
+	ctx := context.Background()
 
-	summary, err := importer.ImportHistory(context.Background(), *days, *minMagnitude, *chunkDays)
+	summary, err := importer.ImportHistory(ctx, *days, *minMagnitude, *chunkDays)
 	if err != nil {
 		log.Printf("history import failed: %v", err)
+	}
+	if err == nil || summary.Processed > 0 {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		refreshErr := repo.RefreshBIMaterializedViews(refreshCtx)
+		cancel()
+		if refreshErr != nil {
+			if err == nil {
+				err = refreshErr
+			}
+			log.Printf("BI materialized view refresh failed: %v", refreshErr)
+		}
 	}
 
 	encoder := json.NewEncoder(os.Stdout)

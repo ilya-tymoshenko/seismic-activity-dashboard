@@ -68,6 +68,7 @@ func (m *ImportJobManager) StartSync(feed string) (models.ImportJobStatus, error
 
 	go func() {
 		summary, err := m.importer.SyncFeedWithProgress(jobCtx, feed, m.progressUpdater(id))
+		err = m.refreshBIViews(jobCtx, id, summary, err)
 		m.finish(id, summary, err)
 	}()
 
@@ -106,6 +107,7 @@ func (m *ImportJobManager) StartHistory(days int, minMagnitude float64, chunkDay
 
 	go func() {
 		summary, err := m.importer.ImportHistoryWithProgress(jobCtx, days, minMagnitude, chunkDays, m.progressUpdater(id))
+		err = m.refreshBIViews(jobCtx, id, summary, err)
 		m.finish(id, summary, err)
 	}()
 
@@ -139,6 +141,7 @@ func (m *ImportJobManager) StartFilteredImport(filters models.Filters, chunkDays
 
 	go func() {
 		summary, err := m.importer.ImportFiltersWithProgress(jobCtx, filters, chunkDays, m.progressUpdater(id))
+		err = m.refreshBIViews(jobCtx, id, summary, err)
 		m.finish(id, summary, err)
 	}()
 
@@ -180,6 +183,7 @@ func (m *ImportJobManager) RunSeedFile(ctx context.Context, path string, onStatu
 			reportImportJobStatus(onStatus, current)
 		}
 	})
+	err = m.refreshBIViews(jobCtx, id, summary, err)
 	m.finish(id, summary, err)
 
 	finishedStatus, ok := m.Get(id)
@@ -297,6 +301,26 @@ func (m *ImportJobManager) progressUpdater(id string) usgs.ProgressCallback {
 	}
 }
 
+func (m *ImportJobManager) refreshBIViews(ctx context.Context, id string, summary models.ImportSummary, err error) error {
+	if err != nil && summary.Processed == 0 {
+		return err
+	}
+	m.progressUpdater(id)(models.ImportProgressUpdate{
+		Progress: 99,
+		Message:  "Refreshing BI dashboards",
+		Summary:  summary,
+	})
+	refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if refreshErr := m.importer.RefreshBIMaterializedViews(refreshCtx); refreshErr != nil {
+		if err != nil {
+			return errors.Join(err, fmt.Errorf("refresh BI materialized views after partial import: %w", refreshErr))
+		}
+		return fmt.Errorf("refresh BI materialized views: %w", refreshErr)
+	}
+	return err
+}
+
 func (m *ImportJobManager) finish(id string, summary models.ImportSummary, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -309,7 +333,7 @@ func (m *ImportJobManager) finish(id string, summary models.ImportSummary, err e
 	finishedAt := time.Now().UTC()
 	status.FinishedAt = &finishedAt
 	status.Summary = summary
-	if errors.Is(err, context.Canceled) {
+	if status.Status == importJobStatusCanceling || errors.Is(err, context.Canceled) {
 		status.Status = importJobStatusCanceled
 		status.Message = "Canceled"
 		status.Error = ""

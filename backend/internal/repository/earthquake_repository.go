@@ -64,6 +64,11 @@ ON CONFLICT (key) DO UPDATE SET
 	return err
 }
 
+func (r *EarthquakeRepository) RefreshBIMaterializedViews(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `SELECT refresh_bi_materialized_views()`)
+	return err
+}
+
 func (r *EarthquakeRepository) EventInventory(ctx context.Context) (int64, *time.Time, *time.Time, error) {
 	var total int64
 	var oldest, newest sql.NullTime
