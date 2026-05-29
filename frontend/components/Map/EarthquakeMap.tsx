@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 
 type Props = {
   earthquakes: Earthquake[];
+  mapBusy?: boolean;
   onBoundsChange: (bounds: Bounds) => void;
   renderLimit?: number;
 };
@@ -67,10 +68,40 @@ type WorkerResponse = {
   items: Array<WorkerEventItem | WorkerClusterItem>;
 };
 
-export default function EarthquakeMap({ earthquakes, onBoundsChange, renderLimit }: Props) {
+export default function EarthquakeMap({ earthquakes, mapBusy = false, onBoundsChange, renderLimit }: Props) {
+  const [clusterBusy, setClusterBusy] = useState(false);
+  const loadingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showLoading, setShowLoading] = useState(false);
+
+  useEffect(() => {
+    const nextBusy = mapBusy || clusterBusy;
+    if (!nextBusy) {
+      if (loadingRef.current) {
+        clearTimeout(loadingRef.current);
+        loadingRef.current = null;
+      }
+      setShowLoading(false);
+      return;
+    }
+    if (showLoading || loadingRef.current) {
+      return;
+    }
+    loadingRef.current = setTimeout(() => {
+      loadingRef.current = null;
+      setShowLoading(true);
+    }, 250);
+    return () => {
+      if (loadingRef.current) {
+        clearTimeout(loadingRef.current);
+        loadingRef.current = null;
+      }
+    };
+  }, [clusterBusy, mapBusy, showLoading]);
+
   return (
     <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[100%]">
       <MapLegend />
+      {showLoading && <MapLoadingOverlay />}
       <MapContainer
         center={[20, 0]}
         className="z-0"
@@ -88,9 +119,28 @@ export default function EarthquakeMap({ earthquakes, onBoundsChange, renderLimit
         />
         <MapSearch earthquakes={earthquakes} />
         <BoundsReporter onBoundsChange={onBoundsChange} />
-        <CanvasMarkerLayer earthquakes={earthquakes} renderLimit={renderLimit} />
+        <CanvasMarkerLayer
+          earthquakes={earthquakes}
+          renderLimit={renderLimit}
+          onBusyChange={setClusterBusy}
+        />
       </MapContainer>
     </Card>
+  );
+}
+
+function MapLoadingOverlay() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[400] flex items-center justify-center bg-slate-950/30">
+      <div className="rounded-full border border-white/40 bg-slate-950/70 px-3 py-2 text-xs text-white shadow-sm">
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-flex size-4 items-center justify-center">
+            <span className="size-4 animate-spin rounded-full border-2 border-white/50 border-t-white" />
+          </span>
+          Loading map
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -171,7 +221,15 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthquake[]; renderLimit?: number }) {
+function CanvasMarkerLayer({
+  earthquakes,
+  renderLimit,
+  onBusyChange
+}: {
+  earthquakes: Earthquake[];
+  renderLimit?: number;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const map = useMap();
   const itemsRef = useRef<DrawnItem[]>([]);
   const earthquakesRef = useRef(earthquakes);
@@ -185,6 +243,15 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
   const workerRequestIdRef = useRef(0);
   const redrawFrameRef = useRef<number | null>(null);
   const redrawQueuedRef = useRef(false);
+  const busyRef = useRef(false);
+
+  const setBusy = useCallback((nextBusy: boolean) => {
+    if (busyRef.current === nextBusy) {
+      return;
+    }
+    busyRef.current = nextBusy;
+    onBusyChange?.(nextBusy);
+  }, [onBusyChange]);
 
   useEffect(() => {
     earthquakesRef.current = earthquakes;
@@ -245,6 +312,7 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
       if (isZoomingRef.current) {
         return;
       }
+      setBusy(false);
       const context = canvas.getContext("2d");
       if (!context) {
         return;
@@ -274,6 +342,7 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
       if (isZoomingRef.current) {
         return;
       }
+      setBusy(true);
 
       const size = map.getSize();
       const visiblePoints: DrawnPoint[] = [];
@@ -376,6 +445,7 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
       itemsRef.current = [];
       clearCanvas();
       closePopupIfHidden([], popupRef, popupEarthquakeIDRef);
+      setBusy(true);
     };
 
     const handleZoomEnd = () => {
@@ -465,13 +535,14 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
       popupRef.current?.remove();
       popupEarthquakeIDRef.current = null;
       map.getContainer().style.cursor = "";
+      setBusy(false);
       worker.terminate();
       workerRef.current = null;
       L.DomUtil.remove(canvas);
       itemsRef.current = [];
       redrawRef.current = () => undefined;
     };
-  }, [map]);
+  }, [map, setBusy]);
 
   return null;
 }

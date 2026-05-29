@@ -44,6 +44,7 @@ export default function HomePage() {
             </div>
             <MapShell
               earthquakes={dashboard.earthquakes}
+              mapBusy={dashboard.mapBusy}
               onBoundsChange={dashboard.setMapBounds}
               renderLimit={parseLimit(dashboard.appliedFilters.limit)}
             />

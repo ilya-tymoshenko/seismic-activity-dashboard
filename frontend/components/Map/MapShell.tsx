@@ -8,6 +8,7 @@ const EarthquakeMap = dynamic(() => import("./EarthquakeMap"), {
 
 type Props = {
   earthquakes: Earthquake[];
+  mapBusy?: boolean;
   onBoundsChange: (bounds: Bounds) => void;
   renderLimit?: number;
 };
