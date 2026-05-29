@@ -531,7 +531,7 @@ function renderEventPopup(earthquake: Earthquake) {
 }
 
 function markerRadius(magnitude: number | null) {
-  return Math.max(6, Math.min(20, 6 + (magnitude || 1.5) * 2));
+  return Math.max(4, Math.min(14, 4 + (magnitude || 1.5) * 1.5));
 }
 
 function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string) {
@@ -727,15 +727,15 @@ function clusterPixelRadius(zoom: number) {
 
 function clusterMarkerRadius(count: number) {
   if (count >= 1000) {
-    return 34;
+    return 28;
   }
   if (count >= 100) {
-    return 30;
+    return 24;
   }
   if (count >= 10) {
-    return 25;
+    return 20;
   }
-  return 21;
+  return 17;
 }
 
 
