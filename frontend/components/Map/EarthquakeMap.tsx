@@ -242,7 +242,6 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
         worker.postMessage({
           requestId,
           zoom: map.getZoom(),
-          maxZoom: resolveMaxZoom(map),
           renderLimit: renderLimitRef.current,
           points: visiblePoints.map((point) => ({
             id: point.earthquake.id,

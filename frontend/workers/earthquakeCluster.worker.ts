@@ -46,12 +46,10 @@ type WorkerRequest = {
   requestId: number;
   points: InputPoint[];
   zoom: number;
-  maxZoom: number;
   renderLimit?: number;
 };
 
 type Cluster = {
-  points: InputPoint[];
   x: number;
   y: number;
   latitude: number;
@@ -62,13 +60,14 @@ type Cluster = {
   bounds: ClusterBounds;
   sinSum: number;
   cosSum: number;
+  single?: InputPoint;
 };
 
 const ctx = self as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
-  const { requestId, points, zoom, maxZoom, renderLimit } = event.data;
-  const items = clusterVisiblePoints(points, zoom, maxZoom, renderLimit);
+  const { requestId, points, zoom, renderLimit } = event.data;
+  const items = clusterVisiblePoints(points, zoom, renderLimit);
   const response: WorkerResponse = { requestId, items };
   ctx.postMessage(response);
 };
@@ -76,7 +75,6 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
 function clusterVisiblePoints(
   points: InputPoint[],
   zoom: number,
-  maxZoom: number,
   renderLimit?: number,
 ) {
   if (points.length === 0) {
@@ -85,10 +83,8 @@ function clusterVisiblePoints(
 
   const limit = normalizeRenderLimit(renderLimit);
   const baseRadius = clusterPixelRadius(zoom);
-  const allowTerminalExpand = zoom >= maxZoom && points.length <= limit;
-
   let clusters = clusterPoints(points, baseRadius);
-  let items = materializeClusters(clusters, allowTerminalExpand);
+  let items = materializeClusters(clusters);
   if (items.length <= limit) {
     return items;
   }
@@ -111,7 +107,7 @@ function limitClusterItems(
   const maxRadius = 240;
   let radius = baseRadius;
   let clusters = clusterPoints(points, radius);
-  let items = materializeClusters(clusters, false);
+  let items = materializeClusters(clusters);
   if (items.length <= limit) {
     return items;
   }
@@ -123,7 +119,7 @@ function limitClusterItems(
     }
     radius = nextRadius;
     clusters = clusterPoints(points, radius);
-    items = materializeClusters(clusters, false);
+    items = materializeClusters(clusters);
     if (items.length <= limit) {
       return items;
     }
@@ -131,7 +127,7 @@ function limitClusterItems(
 
   if (radius < maxRadius) {
     clusters = clusterPoints(points, maxRadius);
-    items = materializeClusters(clusters, false);
+    items = materializeClusters(clusters);
   }
   return items;
 }
@@ -188,7 +184,6 @@ function clusterPoints(points: InputPoint[], clusterRadius: number): Cluster[] {
 
     const radians = (point.longitude * Math.PI) / 180;
     clusters.push({
-      points: [point],
       x: point.x,
       y: point.y,
       latitude: point.latitude,
@@ -204,6 +199,7 @@ function clusterPoints(points: InputPoint[], clusterRadius: number): Cluster[] {
       },
       sinSum: Math.sin(radians),
       cosSum: Math.cos(radians),
+      single: point,
     });
     registerCluster(clusters.length - 1);
   }
@@ -222,8 +218,10 @@ function addPointToCluster(cluster: Cluster, point: InputPoint) {
   cluster.cosSum += Math.cos(radians);
   cluster.longitude = circularLongitude(cluster.sinSum, cluster.cosSum);
   cluster.maxMagnitude = maxMagnitude(cluster.maxMagnitude, point.magnitude);
+  if (cluster.count === 1) {
+    cluster.single = undefined;
+  }
   cluster.count = nextCount;
-  cluster.points.push(point);
   cluster.bounds.minLon = Math.min(cluster.bounds.minLon, point.longitude);
   cluster.bounds.maxLon = Math.max(cluster.bounds.maxLon, point.longitude);
   cluster.bounds.minLat = Math.min(cluster.bounds.minLat, point.latitude);
@@ -232,12 +230,11 @@ function addPointToCluster(cluster: Cluster, point: InputPoint) {
 
 function materializeClusters(
   clusters: Cluster[],
-  expandTerminal: boolean,
 ): Array<WorkerEventItem | WorkerClusterItem> {
   return clusters.flatMap(
     (cluster): Array<WorkerEventItem | WorkerClusterItem> => {
-      if (cluster.count === 1) {
-        const point = cluster.points[0];
+      if (cluster.count === 1 && cluster.single) {
+        const point = cluster.single;
         return [
           {
             kind: "event",
@@ -247,9 +244,6 @@ function materializeClusters(
             y: point.y,
           } satisfies WorkerEventItem,
         ];
-      }
-      if (expandTerminal) {
-        return expandTerminalCluster(cluster);
       }
       return [
         {
@@ -266,39 +260,6 @@ function materializeClusters(
       ];
     },
   );
-}
-
-function expandTerminalCluster(cluster: Cluster): WorkerEventItem[] {
-  return cluster.points.map((point, index) => {
-    const [offsetX, offsetY] = terminalClusterOffset(index);
-    return {
-      kind: "event",
-      id: point.id,
-      radius: point.radius,
-      x: cluster.x + offsetX,
-      y: cluster.y + offsetY,
-    } satisfies WorkerEventItem;
-  });
-}
-
-function terminalClusterOffset(index: number) {
-  if (index === 0) {
-    return [0, 0] as const;
-  }
-
-  let ring = 1;
-  let firstIndexInRing = 1;
-  let pointsInRing = 6;
-  while (index >= firstIndexInRing + pointsInRing) {
-    firstIndexInRing += pointsInRing;
-    ring += 1;
-    pointsInRing = ring * 6;
-  }
-
-  const positionInRing = index - firstIndexInRing;
-  const angle = (Math.PI * 2 * positionInRing) / pointsInRing - Math.PI / 2;
-  const distance = 24 + (ring - 1) * 18;
-  return [Math.cos(angle) * distance, Math.sin(angle) * distance] as const;
 }
 
 function clusterPixelRadius(zoom: number) {
