@@ -1,6 +1,6 @@
 import L from "leaflet";
 import type { MutableRefObject } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Bounds, Earthquake } from "../../lib/types";
 import { formatDateTime, formatNumber, magnitudeTone } from "../../lib/format";
@@ -86,6 +86,7 @@ export default function EarthquakeMap({ earthquakes, onBoundsChange, renderLimit
           noWrap
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <MapSearch earthquakes={earthquakes} />
         <BoundsReporter onBoundsChange={onBoundsChange} />
         <CanvasMarkerLayer earthquakes={earthquakes} renderLimit={renderLimit} />
       </MapContainer>
@@ -103,6 +104,60 @@ function MapLegend() {
         <LegendDot color="#e15b42" label="5-6.9" />
         <LegendDot color="#b91c1c" label="7+" />
       </div>
+    </div>
+  );
+}
+
+function MapSearch({ earthquakes }: { earthquakes: Earthquake[] }) {
+  const map = useMap();
+  const [query, setQuery] = useState("");
+
+  const matches = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return [] as Earthquake[];
+    }
+    return earthquakes
+      .filter((earthquake) => {
+        const place = earthquake.place?.toLowerCase() || "";
+        return place.includes(normalized) || earthquake.id.toLowerCase().includes(normalized);
+      })
+      .slice(0, 8);
+  }, [earthquakes, query]);
+
+  const handleSelect = (earthquake: Earthquake) => {
+    const nextZoom = Math.max(map.getZoom(), 5);
+    map.setView([earthquake.latitude, earthquake.longitude], nextZoom);
+    L.popup({ maxWidth: 320 })
+      .setLatLng([earthquake.latitude, earthquake.longitude])
+      .setContent(renderEventPopup(earthquake))
+      .openOn(map);
+  };
+
+  return (
+    <div className="absolute right-3 top-3 z-[500] w-[260px] rounded-lg border bg-card/95 p-2 text-xs shadow-sm backdrop-blur">
+      <label className="block text-[11px] font-medium text-muted-foreground">Search event</label>
+      <input
+        className="mt-1 w-full rounded-md border bg-background px-2 py-1 text-xs text-foreground"
+        placeholder="Place or ID"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {matches.length > 0 && (
+        <div className="mt-2 max-h-44 space-y-1 overflow-auto">
+          {matches.map((earthquake) => (
+            <button
+              key={earthquake.id}
+              className="w-full rounded-md border border-transparent bg-muted/40 px-2 py-1 text-left text-xs text-foreground hover:border-primary/30 hover:bg-muted"
+              type="button"
+              onClick={() => handleSelect(earthquake)}
+            >
+              <div className="truncate font-medium">{earthquake.place || "Unknown location"}</div>
+              <div className="text-[11px] text-muted-foreground">ID: {earthquake.id}</div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
