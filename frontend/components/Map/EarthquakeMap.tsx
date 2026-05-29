@@ -231,6 +231,7 @@ function CanvasMarkerLayer({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const map = useMap();
+  const CANVAS_PADDING = 64;
   const itemsRef = useRef<DrawnItem[]>([]);
   const earthquakesRef = useRef(earthquakes);
   const earthquakeByIdRef = useRef(new Map<string, Earthquake>());
@@ -288,11 +289,15 @@ function CanvasMarkerLayer({
     const resizeCanvas = () => {
       const size = map.getSize();
       const pixelRatio = window.devicePixelRatio || 1;
-      canvas.width = Math.round(size.x * pixelRatio);
-      canvas.height = Math.round(size.y * pixelRatio);
-      canvas.style.width = `${size.x}px`;
-      canvas.style.height = `${size.y}px`;
-      const topLeft = map.containerPointToLayerPoint([0, 0]);
+      const paddedWidth = size.x + CANVAS_PADDING * 2;
+      const paddedHeight = size.y + CANVAS_PADDING * 2;
+      canvas.width = Math.round(paddedWidth * pixelRatio);
+      canvas.height = Math.round(paddedHeight * pixelRatio);
+      canvas.style.width = `${paddedWidth}px`;
+      canvas.style.height = `${paddedHeight}px`;
+      const topLeft = map
+        .containerPointToLayerPoint([0, 0])
+        .subtract(L.point(CANVAS_PADDING, CANVAS_PADDING));
       L.DomUtil.setPosition(canvas, topLeft);
     };
 
@@ -304,8 +309,13 @@ function CanvasMarkerLayer({
       resizeCanvas();
       const size = map.getSize();
       const pixelRatio = window.devicePixelRatio || 1;
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, size.x, size.y);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, CANVAS_PADDING, CANVAS_PADDING);
+      context.clearRect(
+        -CANVAS_PADDING,
+        -CANVAS_PADDING,
+        size.x + CANVAS_PADDING * 2,
+        size.y + CANVAS_PADDING * 2
+      );
     };
 
     const drawItems = (nextItems: DrawnItem[]) => {
@@ -321,8 +331,13 @@ function CanvasMarkerLayer({
       resizeCanvas();
       const size = map.getSize();
       const pixelRatio = window.devicePixelRatio || 1;
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, size.x, size.y);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, CANVAS_PADDING, CANVAS_PADDING);
+      context.clearRect(
+        -CANVAS_PADDING,
+        -CANVAS_PADDING,
+        size.x + CANVAS_PADDING * 2,
+        size.y + CANVAS_PADDING * 2
+      );
 
       const singles = nextItems.filter((item) => item.kind === "event") as DrawnPoint[];
       const clusters = nextItems.filter((item) => item.kind === "cluster") as DrawnCluster[];
@@ -349,7 +364,8 @@ function CanvasMarkerLayer({
       for (const earthquake of earthquakesRef.current) {
         const point = map.latLngToContainerPoint([earthquake.latitude, earthquake.longitude]);
         const radius = markerRadius(earthquake.magnitude);
-        if (point.x < -radius || point.y < -radius || point.x > size.x + radius || point.y > size.y + radius) {
+        const padding = CANVAS_PADDING + radius;
+        if (point.x < -padding || point.y < -padding || point.x > size.x + padding || point.y > size.y + padding) {
           continue;
         }
         visiblePoints.push({
