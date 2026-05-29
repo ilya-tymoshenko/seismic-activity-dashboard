@@ -21,7 +21,7 @@ import type {
 
 export const defaultFilters: Filters = {
   minMagnitude: "2.5",
-  limit: "1000",
+  limit: "100",
 };
 
 export function useDashboardData() {
