@@ -696,6 +696,10 @@ func (i *Importer) acquire(ctx context.Context) (func(), error) {
 }
 
 func queryFiltersFromDashboardFilters(filters models.Filters, start time.Time, end time.Time) QueryFilters {
+	alert := filters.Alert
+	if alert == "none" {
+		alert = ""
+	}
 	return QueryFilters{
 		StartTime:    start,
 		EndTime:      end,
@@ -704,7 +708,7 @@ func queryFiltersFromDashboardFilters(filters models.Filters, start time.Time, e
 		MinDepth:     filters.MinDepth,
 		MaxDepth:     filters.MaxDepth,
 		BBox:         filters.BBox,
-		Alert:        filters.Alert,
+		Alert:        alert,
 		EventType:    filters.Type,
 		Tsunami:      filters.Tsunami,
 	}

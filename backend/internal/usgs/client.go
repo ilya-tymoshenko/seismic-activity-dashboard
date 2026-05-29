@@ -189,7 +189,7 @@ func queryParams(filters QueryFilters) url.Values {
 		params.Set("maxlongitude", formatUSGSFloat(filters.BBox.MaxLon))
 		params.Set("maxlatitude", formatUSGSFloat(filters.BBox.MaxLat))
 	}
-	if filters.Alert != "" {
+	if filters.Alert != "" && filters.Alert != "none" {
 		params.Set("alertlevel", filters.Alert)
 	}
 	if filters.EventType != "" {

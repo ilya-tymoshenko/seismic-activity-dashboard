@@ -545,8 +545,12 @@ func buildWhere(filters models.Filters, includeBBox bool) (string, []any) {
 		parts = append(parts, "tsunami = "+placeholder(len(args)))
 	}
 	if filters.Alert != "" {
-		args = append(args, filters.Alert)
-		parts = append(parts, "alert = "+placeholder(len(args)))
+		if filters.Alert == "none" {
+			parts = append(parts, "alert IS NULL")
+		} else {
+			args = append(args, filters.Alert)
+			parts = append(parts, "alert = "+placeholder(len(args)))
+		}
 	}
 	if filters.Type != "" {
 		args = append(args, filters.Type)

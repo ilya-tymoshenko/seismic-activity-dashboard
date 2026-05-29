@@ -56,12 +56,16 @@ export default function FiltersPanel({ filters, onChange, onApply, onImportFilte
           </Field>
         </div>
         <Field label="Alert">
-          <Select value={filters.alert || "all"} onValueChange={(value) => update("alert", value === "all" ? "" : value ?? "")}>
+          <Select
+            value={filters.alert || "all"}
+            onValueChange={(value) => update("alert", value === "all" ? "" : value ?? "")}
+          >
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="start">
               <SelectItem value="all">All alerts</SelectItem>
+              <SelectItem value="none">Not specified</SelectItem>
               <SelectItem value="green">Green</SelectItem>
               <SelectItem value="yellow">Yellow</SelectItem>
               <SelectItem value="orange">Orange</SelectItem>
