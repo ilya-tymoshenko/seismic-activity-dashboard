@@ -20,6 +20,7 @@ import type {
 } from "@/lib/types";
 
 export const defaultFilters: Filters = {
+  dateFrom: defaultDateFromLastYear(),
   minMagnitude: "2.5",
   limit: "100",
 };
@@ -351,6 +352,13 @@ export function useDashboardData() {
     status,
     summaryBusy,
   };
+}
+
+function defaultDateFromLastYear() {
+  const now = new Date();
+  const lastYear = new Date(now);
+  lastYear.setFullYear(now.getFullYear() - 1);
+  return lastYear.toISOString().slice(0, 10);
 }
 
 function delay(ms: number) {
