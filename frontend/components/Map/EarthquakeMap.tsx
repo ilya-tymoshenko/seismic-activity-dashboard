@@ -127,6 +127,8 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
   const renderLimitRef = useRef(renderLimit);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
+  const redrawFrameRef = useRef<number | null>(null);
+  const redrawQueuedRef = useRef(false);
 
   useEffect(() => {
     earthquakesRef.current = earthquakes;
@@ -236,7 +238,6 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
 
       const worker = workerRef.current;
       if (worker) {
-        clearCanvas();
         workerRequestIdRef.current += 1;
         const requestId = workerRequestIdRef.current;
         worker.postMessage({
@@ -323,11 +324,22 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
 
     const handleZoomEnd = () => {
       isZoomingRef.current = false;
-      redraw();
+      scheduleRedraw();
     };
 
-    redrawRef.current = redraw;
-    redraw();
+    const scheduleRedraw = () => {
+      if (redrawQueuedRef.current) {
+        return;
+      }
+      redrawQueuedRef.current = true;
+      redrawFrameRef.current = window.requestAnimationFrame(() => {
+        redrawQueuedRef.current = false;
+        redraw();
+      });
+    };
+
+    redrawRef.current = scheduleRedraw;
+    scheduleRedraw();
 
     const worker = new Worker(new URL("../../workers/earthquakeCluster.worker.ts", import.meta.url));
     workerRef.current = worker;
@@ -372,9 +384,9 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
       click: handleClick,
       mousemove: handleMouseMove,
       mouseout: handleMouseOut,
-      moveend: redraw,
-      resize: redraw,
-      viewreset: redraw,
+      moveend: scheduleRedraw,
+      resize: scheduleRedraw,
+      viewreset: scheduleRedraw,
       zoomstart: handleZoomStart,
       zoomend: handleZoomEnd
     });
@@ -384,12 +396,16 @@ function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthqua
         click: handleClick,
         mousemove: handleMouseMove,
         mouseout: handleMouseOut,
-        moveend: redraw,
-        resize: redraw,
-        viewreset: redraw,
+        moveend: scheduleRedraw,
+        resize: scheduleRedraw,
+        viewreset: scheduleRedraw,
         zoomstart: handleZoomStart,
         zoomend: handleZoomEnd
       });
+      if (redrawFrameRef.current !== null) {
+        window.cancelAnimationFrame(redrawFrameRef.current);
+      }
+      redrawQueuedRef.current = false;
       popupRef.current?.remove();
       popupEarthquakeIDRef.current = null;
       map.getContainer().style.cursor = "";
