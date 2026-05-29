@@ -76,13 +76,14 @@ export default function EarthquakeMap({ earthquakes, onBoundsChange, renderLimit
         className="z-0"
         maxBounds={[[-90, -180], [90, 180]]}
         maxBoundsViscosity={0.8}
+        minZoom={2}
         preferCanvas
         scrollWheelZoom
-        worldCopyJump
         zoom={2}
       >
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
+          noWrap
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <BoundsReporter onBoundsChange={onBoundsChange} />
