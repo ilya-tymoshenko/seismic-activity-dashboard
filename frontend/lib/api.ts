@@ -5,7 +5,7 @@ import type {
   Filters,
   ImportJobStartResponse,
   ImportJobStatus,
-  StatsResponse
+  StatsResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -21,13 +21,15 @@ function buildQuery(filters: Filters = {}, bounds?: Bounds): string {
   add(params, "maxDepth", filters.maxDepth);
   add(params, "alert", filters.alert);
   add(params, "type", filters.type);
-  add(params, "limit", filters.limit || "1000");
 
   if (filters.tsunamiOnly) {
     params.set("tsunami", "1");
   }
   if (bounds) {
-    params.set("bbox", `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`);
+    params.set(
+      "bbox",
+      `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`,
+    );
   }
 
   const query = params.toString();
@@ -66,8 +68,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       Accept: "application/json",
-      ...(init?.headers || {})
-    }
+      ...(init?.headers || {}),
+    },
   });
 
   if (!response.ok) {
@@ -87,7 +89,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function fetchEarthquakes(filters: Filters, bounds?: Bounds) {
-  return request<EarthquakesResponse>(`/api/earthquakes${buildQuery(filters, bounds)}`);
+  return request<EarthquakesResponse>(
+    `/api/earthquakes${buildQuery(filters, bounds)}`,
+  );
 }
 
 export function fetchStats(filters: Filters, bounds?: Bounds) {
@@ -99,33 +103,42 @@ export function fetchAnalytics(filters: Filters) {
 }
 
 export function syncData(feed = "2.5_day") {
-  return request<ImportJobStartResponse>(`/api/sync?feed=${encodeURIComponent(feed)}`, {
-    method: "POST"
-  });
+  return request<ImportJobStartResponse>(
+    `/api/sync?feed=${encodeURIComponent(feed)}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function importHistory(days = 3650, minMagnitude = 2.5, chunkDays = 30) {
   const params = new URLSearchParams({
     days: String(days),
     minMagnitude: String(minMagnitude),
-    chunkDays: String(chunkDays)
+    chunkDays: String(chunkDays),
   });
-  return request<ImportJobStartResponse>(`/api/import/history?${params.toString()}`, {
-    method: "POST"
-  });
+  return request<ImportJobStartResponse>(
+    `/api/import/history?${params.toString()}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function importFilteredData(filters: Filters, chunkDays = 30) {
-  return request<ImportJobStartResponse>(`/api/import/filter${buildImportFilterQuery(filters, chunkDays)}`, {
-    method: "POST"
-  });
+  return request<ImportJobStartResponse>(
+    `/api/import/filter${buildImportFilterQuery(filters, chunkDays)}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function fetchActiveImportJob() {
   const response = await fetch(`${API_URL}/api/jobs/active`, {
     headers: {
-      Accept: "application/json"
-    }
+      Accept: "application/json",
+    },
   });
   if (response.status === 404) {
     return null;
@@ -150,7 +163,10 @@ export function fetchImportJob(jobId: string) {
 }
 
 export function cancelImportJob(jobId: string) {
-  return request<ImportJobStatus>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
-    method: "POST"
-  });
+  return request<ImportJobStatus>(
+    `/api/jobs/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+    },
+  );
 }

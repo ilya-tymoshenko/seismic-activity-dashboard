@@ -12,10 +12,6 @@ import (
 	"earthquake-big-data/backend/internal/models"
 )
 
-const (
-	maxEarthquakeLimit = 5000
-)
-
 type EarthquakeRepository struct {
 	db *sql.DB
 }
@@ -194,15 +190,17 @@ WHERE earthquakes.updated <= EXCLUDED.updated`
 func (r *EarthquakeRepository) ListEarthquakes(ctx context.Context, filters models.Filters) ([]models.Earthquake, error) {
 	limit := clampLimit(filters.Limit)
 	where, args := buildWhere(filters, true)
-	args = append(args, limit)
-	limitPlaceholder := placeholder(len(args))
 
 	query := `
 SELECT id, time, updated, latitude, longitude, depth, magnitude, mag_type, place, alert, tsunami, sig, type, source, ingested_at
 FROM earthquakes
 ` + where + `
-ORDER BY time DESC
-LIMIT ` + limitPlaceholder
+ORDER BY time DESC`
+
+	if limit > 0 {
+		args = append(args, limit)
+		query += "\nLIMIT " + placeholder(len(args))
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -210,7 +208,10 @@ LIMIT ` + limitPlaceholder
 	}
 	defer rows.Close()
 
-	result := make([]models.Earthquake, 0, limit)
+	result := make([]models.Earthquake, 0)
+	if limit > 0 {
+		result = make([]models.Earthquake, 0, limit)
+	}
 	for rows.Next() {
 		item, err := scanEarthquake(rows)
 		if err != nil {
@@ -575,10 +576,7 @@ func ClampLimit(limit int) int {
 
 func clampLimit(limit int) int {
 	if limit <= 0 {
-		return 1000
-	}
-	if limit > maxEarthquakeLimit {
-		return maxEarthquakeLimit
+		return 0
 	}
 	return limit
 }

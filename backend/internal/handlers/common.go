@@ -84,7 +84,7 @@ func parseFilters(c *gin.Context) (models.Filters, bool) {
 		filters.BBox = parsed
 	}
 
-	limit, err := parseIntDefault(c.Query("limit"), 1000)
+	limit, err := parseIntDefault(c.Query("limit"), 0)
 	if err != nil {
 		abortBadRequest(c, "limit must be an integer")
 		return filters, false

@@ -8,13 +8,20 @@ import {
   fetchStats,
   importFilteredData,
   importHistory,
-  syncData
+  syncData,
 } from "@/lib/api";
-import type { AnalyticsResponse, Bounds, Earthquake, Filters, ImportJobStatus, StatsResponse } from "@/lib/types";
+import type {
+  AnalyticsResponse,
+  Bounds,
+  Earthquake,
+  Filters,
+  ImportJobStatus,
+  StatsResponse,
+} from "@/lib/types";
 
 export const defaultFilters: Filters = {
   minMagnitude: "2.5",
-  limit: "1000"
+  limit: "1000",
 };
 
 export function useDashboardData() {
@@ -29,7 +36,9 @@ export function useDashboardData() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionJob, setActionJob] = useState<ImportJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("Dashboard ready. Sync or import USGS data to populate the database.");
+  const [status, setStatus] = useState(
+    "Dashboard ready. Sync or import USGS data to populate the database.",
+  );
   const actionJobRef = useRef<ImportJobStatus | null>(null);
   const activeJobObserverRef = useRef(false);
   const appliedFiltersRef = useRef(appliedFilters);
@@ -53,11 +62,13 @@ export function useDashboardData() {
     try {
       const [nextStats, nextAnalytics] = await Promise.all([
         fetchStats(filters),
-        fetchAnalytics(filters)
+        fetchAnalytics(filters),
       ]);
       setStats(nextStats);
       setAnalytics(nextAnalytics);
-      setStatus(`Loaded analytics for ${nextStats.totalEvents.toLocaleString()} events.`);
+      setStatus(
+        `Loaded analytics for ${nextStats.totalEvents.toLocaleString()} events.`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -65,19 +76,32 @@ export function useDashboardData() {
     }
   }, []);
 
-  const loadEarthquakes = useCallback(async (filters: Filters, nextBounds?: Bounds) => {
-    setMapBusy(true);
-    setError(null);
-    try {
-      const response = await fetchEarthquakes(filters, nextBounds);
-      setEarthquakes(response.data);
-      setStatus(`Map loaded ${response.meta.returned.toLocaleString()} of max ${response.meta.limit.toLocaleString()} events.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load earthquakes");
-    } finally {
-      setMapBusy(false);
-    }
-  }, []);
+  const loadEarthquakes = useCallback(
+    async (filters: Filters, nextBounds?: Bounds) => {
+      setMapBusy(true);
+      setError(null);
+      try {
+        const response = await fetchEarthquakes(filters, nextBounds);
+        setEarthquakes(response.data);
+        if (response.meta.limit > 0) {
+          setStatus(
+            `Map loaded ${response.meta.returned.toLocaleString()} of max ${response.meta.limit.toLocaleString()} events.`,
+          );
+        } else {
+          setStatus(
+            `Map loaded ${response.meta.returned.toLocaleString()} events.`,
+          );
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load earthquakes",
+        );
+      } finally {
+        setMapBusy(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     void loadSummary(appliedFilters);
@@ -114,7 +138,7 @@ export function useDashboardData() {
   const refreshAll = useCallback(async () => {
     await Promise.all([
       loadSummary(appliedFilters),
-      loadEarthquakes(appliedFilters, bounds)
+      loadEarthquakes(appliedFilters, bounds),
     ]);
   }, [appliedFilters, bounds, loadEarthquakes, loadSummary]);
 
@@ -141,7 +165,11 @@ export function useDashboardData() {
     let stopped = false;
 
     const observeActiveJob = async () => {
-      if (stopped || activeJobObserverRef.current || isActiveJob(actionJobRef.current)) {
+      if (
+        stopped ||
+        activeJobObserverRef.current ||
+        isActiveJob(actionJobRef.current)
+      ) {
         return;
       }
 
@@ -151,7 +179,13 @@ export function useDashboardData() {
       } catch {
         return;
       }
-      if (stopped || !activeJob || !isActiveJob(activeJob) || activeJobObserverRef.current || isActiveJob(actionJobRef.current)) {
+      if (
+        stopped ||
+        !activeJob ||
+        !isActiveJob(activeJob) ||
+        activeJobObserverRef.current ||
+        isActiveJob(actionJobRef.current)
+      ) {
         return;
       }
 
@@ -164,7 +198,7 @@ export function useDashboardData() {
         setStatus(formatTerminalJob(job));
         await Promise.all([
           loadSummary(appliedFiltersRef.current),
-          loadEarthquakes(appliedFiltersRef.current, boundsRef.current)
+          loadEarthquakes(appliedFiltersRef.current, boundsRef.current),
         ]);
       } catch (err) {
         if (!stopped) {
@@ -243,10 +277,12 @@ export function useDashboardData() {
       setStatus(formatTerminalJob(job));
       await Promise.all([
         loadSummary(nextFilters),
-        loadEarthquakes(nextFilters, bounds)
+        loadEarthquakes(nextFilters, bounds),
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Filtered USGS import failed");
+      setError(
+        err instanceof Error ? err.message : "Filtered USGS import failed",
+      );
     } finally {
       setActionBusy(false);
     }
@@ -272,6 +308,7 @@ export function useDashboardData() {
     actionBusy,
     actionJob,
     analytics,
+    appliedFilters,
     applyFilters,
     busy,
     draftFilters,
@@ -288,7 +325,7 @@ export function useDashboardData() {
     setMapBounds,
     stats,
     status,
-    summaryBusy
+    summaryBusy,
   };
 }
 
@@ -316,5 +353,10 @@ function formatTerminalJob(job: ImportJobStatus) {
 }
 
 function isActiveJob(job: ImportJobStatus | null | undefined) {
-  return !!job && (job.status === "queued" || job.status === "running" || job.status === "canceling");
+  return (
+    !!job &&
+    (job.status === "queued" ||
+      job.status === "running" ||
+      job.status === "canceling")
+  );
 }

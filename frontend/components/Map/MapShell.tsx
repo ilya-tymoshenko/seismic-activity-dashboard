@@ -9,6 +9,7 @@ const EarthquakeMap = dynamic(() => import("./EarthquakeMap"), {
 type Props = {
   earthquakes: Earthquake[];
   onBoundsChange: (bounds: Bounds) => void;
+  renderLimit?: number;
 };
 
 export default function MapShell(props: Props) {

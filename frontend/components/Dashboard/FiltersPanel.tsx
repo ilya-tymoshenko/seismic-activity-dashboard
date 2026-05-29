@@ -70,15 +70,15 @@ export default function FiltersPanel({ filters, onChange, onApply, onImportFilte
           </Select>
         </Field>
         <Field label="Limit">
-          <Select value={filters.limit || "1000"} onValueChange={(value) => update("limit", value ?? "1000")}>
+          <Select value={filters.limit || "100"} onValueChange={(value) => update("limit", value ?? "100")}>
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="start">
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+              <SelectItem value="250">250</SelectItem>
               <SelectItem value="500">500</SelectItem>
-              <SelectItem value="1000">1,000</SelectItem>
-              <SelectItem value="2500">2,500</SelectItem>
-              <SelectItem value="5000">5,000</SelectItem>
             </SelectContent>
           </Select>
         </Field>

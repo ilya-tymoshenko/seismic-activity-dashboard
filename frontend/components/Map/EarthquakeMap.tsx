@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 type Props = {
   earthquakes: Earthquake[];
   onBoundsChange: (bounds: Bounds) => void;
+  renderLimit?: number;
 };
 
 type DrawnPoint = {
@@ -20,7 +21,6 @@ type DrawnPoint = {
 };
 
 type DrawnCluster = {
-  earthquakes: Earthquake[];
   kind: "cluster";
   latitude: number;
   longitude: number;
@@ -28,11 +28,46 @@ type DrawnCluster = {
   radius: number;
   x: number;
   y: number;
+  count: number;
+  bounds?: ClusterBounds;
+  earthquake?: Earthquake;
+};
+
+type ClusterBounds = {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
 };
 
 type DrawnItem = DrawnCluster | DrawnPoint;
 
-export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
+type WorkerEventItem = {
+  kind: "event";
+  id: string;
+  radius: number;
+  x: number;
+  y: number;
+};
+
+type WorkerClusterItem = {
+  kind: "cluster";
+  latitude: number;
+  longitude: number;
+  maxMagnitude: number | null;
+  radius: number;
+  x: number;
+  y: number;
+  count: number;
+  bounds?: ClusterBounds;
+};
+
+type WorkerResponse = {
+  requestId: number;
+  items: Array<WorkerEventItem | WorkerClusterItem>;
+};
+
+export default function EarthquakeMap({ earthquakes, onBoundsChange, renderLimit }: Props) {
   return (
     <Card className="relative h-[620px] overflow-hidden p-0 xl:h-[100%]">
       <MapLegend />
@@ -51,7 +86,7 @@ export default function EarthquakeMap({ earthquakes, onBoundsChange }: Props) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <BoundsReporter onBoundsChange={onBoundsChange} />
-        <CanvasMarkerLayer earthquakes={earthquakes} />
+        <CanvasMarkerLayer earthquakes={earthquakes} renderLimit={renderLimit} />
       </MapContainer>
     </Card>
   );
@@ -80,17 +115,26 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
+function CanvasMarkerLayer({ earthquakes, renderLimit }: { earthquakes: Earthquake[]; renderLimit?: number }) {
   const map = useMap();
   const itemsRef = useRef<DrawnItem[]>([]);
   const earthquakesRef = useRef(earthquakes);
+  const earthquakeByIdRef = useRef(new Map<string, Earthquake>());
   const redrawRef = useRef<() => void>(() => undefined);
   const popupRef = useRef<L.Popup | null>(null);
   const popupEarthquakeIDRef = useRef<string | null>(null);
   const isZoomingRef = useRef(false);
+  const renderLimitRef = useRef(renderLimit);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
 
   useEffect(() => {
     earthquakesRef.current = earthquakes;
+    const nextMap = new Map<string, Earthquake>();
+    for (const earthquake of earthquakes) {
+      nextMap.set(earthquake.id, earthquake);
+    }
+    earthquakeByIdRef.current = nextMap;
     if (popupEarthquakeIDRef.current) {
       const currentPopupEarthquake = earthquakes.find((earthquake) => earthquake.id === popupEarthquakeIDRef.current);
       if (currentPopupEarthquake) {
@@ -105,6 +149,11 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
     }
     redrawRef.current();
   }, [earthquakes]);
+
+  useEffect(() => {
+    renderLimitRef.current = renderLimit;
+    redrawRef.current();
+  }, [renderLimit]);
 
   useEffect(() => {
     const canvas = L.DomUtil.create("canvas", "leaflet-earthquake-canvas leaflet-layer") as HTMLCanvasElement;
@@ -134,7 +183,7 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       context.clearRect(0, 0, size.x, size.y);
     };
 
-    const redraw = () => {
+    const drawItems = (nextItems: DrawnItem[]) => {
       if (isZoomingRef.current) {
         return;
       }
@@ -149,6 +198,26 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, size.x, size.y);
 
+      const singles = nextItems.filter((item) => item.kind === "event") as DrawnPoint[];
+      const clusters = nextItems.filter((item) => item.kind === "cluster") as DrawnCluster[];
+
+      for (const item of singles) {
+        drawMarker(context, item.x, item.y, item.radius, magnitudeTone(item.earthquake.magnitude));
+      }
+      for (const item of clusters) {
+        drawCluster(context, item);
+      }
+
+      itemsRef.current = nextItems;
+      closePopupIfHidden(nextItems, popupRef, popupEarthquakeIDRef);
+    };
+
+    const redraw = () => {
+      if (isZoomingRef.current) {
+        return;
+      }
+
+      const size = map.getSize();
       const visiblePoints: DrawnPoint[] = [];
       for (const earthquake of earthquakesRef.current) {
         const point = map.latLngToContainerPoint([earthquake.latitude, earthquake.longitude]);
@@ -165,19 +234,35 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
         });
       }
 
-      const nextItems = clusterVisiblePoints(visiblePoints, map.getZoom(), resolveMaxZoom(map));
-      const singles = nextItems.filter((item) => item.kind === "event") as DrawnPoint[];
-      const clusters = nextItems.filter((item) => item.kind === "cluster") as DrawnCluster[];
-
-      for (const item of singles) {
-        drawMarker(context, item.x, item.y, item.radius, magnitudeTone(item.earthquake.magnitude));
+      const worker = workerRef.current;
+      if (worker) {
+        clearCanvas();
+        workerRequestIdRef.current += 1;
+        const requestId = workerRequestIdRef.current;
+        worker.postMessage({
+          requestId,
+          zoom: map.getZoom(),
+          maxZoom: resolveMaxZoom(map),
+          renderLimit: renderLimitRef.current,
+          points: visiblePoints.map((point) => ({
+            id: point.earthquake.id,
+            latitude: point.earthquake.latitude,
+            longitude: point.earthquake.longitude,
+            magnitude: point.earthquake.magnitude,
+            x: point.x,
+            y: point.y,
+            radius: point.radius
+          }))
+        });
+        return;
       }
-      for (const item of clusters) {
-        drawCluster(context, item);
-      }
 
-      itemsRef.current = nextItems;
-      closePopupIfHidden(nextItems, popupRef, popupEarthquakeIDRef);
+      const nextItems = clusterVisiblePoints(
+        visiblePoints,
+        map.getZoom(),
+        renderLimitRef.current
+      );
+      drawItems(nextItems);
     };
 
     const findHit = (point: L.Point) => {
@@ -245,6 +330,45 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
     redrawRef.current = redraw;
     redraw();
 
+    const worker = new Worker(new URL("../../workers/earthquakeCluster.worker.ts", import.meta.url));
+    workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      if (event.data.requestId !== workerRequestIdRef.current) {
+        return;
+      }
+      if (isZoomingRef.current) {
+        return;
+      }
+      const quakeMap = earthquakeByIdRef.current;
+      const nextItems = event.data.items.flatMap((item) => {
+        if (item.kind === "event") {
+          const earthquake = quakeMap.get(item.id);
+          if (!earthquake) {
+            return [];
+          }
+          return {
+            earthquake,
+            kind: "event",
+            radius: item.radius,
+            x: item.x,
+            y: item.y
+          } satisfies DrawnPoint;
+        }
+        return {
+          kind: "cluster",
+          latitude: item.latitude,
+          longitude: item.longitude,
+          maxMagnitude: item.maxMagnitude,
+          radius: item.radius,
+          x: item.x,
+          y: item.y,
+          count: item.count,
+          bounds: item.bounds
+        } satisfies DrawnCluster;
+      });
+      drawItems(nextItems);
+    };
+
     map.on({
       click: handleClick,
       mousemove: handleMouseMove,
@@ -270,6 +394,8 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       popupRef.current?.remove();
       popupEarthquakeIDRef.current = null;
       map.getContainer().style.cursor = "";
+      worker.terminate();
+      workerRef.current = null;
       L.DomUtil.remove(canvas);
       itemsRef.current = [];
       redrawRef.current = () => undefined;
@@ -352,43 +478,135 @@ function drawMarker(context: CanvasRenderingContext2D, x: number, y: number, rad
   context.fill();
 }
 
-function clusterVisiblePoints(points: DrawnPoint[], zoom: number, maxZoom: number): DrawnItem[] {
-  const clusterRadius = clusterPixelRadius(zoom);
+function clusterVisiblePoints(points: DrawnPoint[], zoom: number, renderLimit?: number): DrawnItem[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const limit = normalizeRenderLimit(renderLimit);
+  const baseRadius = clusterPixelRadius(zoom);
+  let clusters = clusterPoints(points, baseRadius);
+  let items = materializeClusters(clusters);
+  if (items.length <= limit) {
+    return items;
+  }
+
+  return limitClusterItems(points, baseRadius, limit);
+}
+
+function normalizeRenderLimit(renderLimit?: number) {
+  if (!renderLimit || !Number.isFinite(renderLimit) || renderLimit <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.floor(renderLimit);
+}
+
+function limitClusterItems(points: DrawnPoint[], baseRadius: number, limit: number): DrawnItem[] {
+  const maxRadius = 240;
+  let radius = baseRadius;
+  let clusters = clusterPoints(points, radius);
+  let items = materializeClusters(clusters);
+  if (items.length <= limit) {
+    return items;
+  }
+
+  for (let step = 0; step < 10 && radius < maxRadius; step += 1) {
+    const nextRadius = Math.min(maxRadius, Math.ceil(radius * 1.35) + 2);
+    if (nextRadius === radius) {
+      break;
+    }
+    radius = nextRadius;
+    clusters = clusterPoints(points, radius);
+    items = materializeClusters(clusters);
+    if (items.length <= limit) {
+      return items;
+    }
+  }
+
+  if (radius < maxRadius) {
+    clusters = clusterPoints(points, maxRadius);
+    items = materializeClusters(clusters);
+  }
+  return items;
+}
+
+function clusterPoints(points: DrawnPoint[], clusterRadius: number): DrawnCluster[] {
   const clusters: DrawnCluster[] = [];
-  const isTerminalZoom = zoom >= maxZoom;
+  const cellSize = Math.max(12, clusterRadius);
+  const grid = new Map<string, number[]>();
+  const radiusSquared = clusterRadius * clusterRadius;
+
+  const registerCluster = (clusterIndex: number) => {
+    const cluster = clusters[clusterIndex];
+    const cellX = Math.floor(cluster.x / cellSize);
+    const cellY = Math.floor(cluster.y / cellSize);
+    const key = `${cellX},${cellY}`;
+    const bucket = grid.get(key);
+    if (bucket) {
+      bucket.push(clusterIndex);
+    } else {
+      grid.set(key, [clusterIndex]);
+    }
+  };
 
   for (const point of points) {
+    const cellX = Math.floor(point.x / cellSize);
+    const cellY = Math.floor(point.y / cellSize);
     let nearestCluster: DrawnCluster | null = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const cluster of clusters) {
-      const dx = cluster.x - point.x;
-      const dy = cluster.y - point.y;
-      const distance = dx * dx + dy * dy;
-      if (distance <= clusterRadius * clusterRadius && distance < nearestDistance) {
-        nearestCluster = cluster;
-        nearestDistance = distance;
+
+    for (let dxCell = -1; dxCell <= 1; dxCell += 1) {
+      for (let dyCell = -1; dyCell <= 1; dyCell += 1) {
+        const key = `${cellX + dxCell},${cellY + dyCell}`;
+        const bucket = grid.get(key);
+        if (!bucket) {
+          continue;
+        }
+        for (const clusterIndex of bucket) {
+          const cluster = clusters[clusterIndex];
+          const dx = cluster.x - point.x;
+          const dy = cluster.y - point.y;
+          const distance = dx * dx + dy * dy;
+          if (distance <= radiusSquared && distance < nearestDistance) {
+            nearestCluster = cluster;
+            nearestDistance = distance;
+          }
+        }
       }
     }
 
     if (nearestCluster) {
       addPointToCluster(nearestCluster, point);
-    } else {
-      clusters.push({
-        earthquakes: [point.earthquake],
-        kind: "cluster",
-        latitude: point.earthquake.latitude,
-        longitude: point.earthquake.longitude,
-        maxMagnitude: point.earthquake.magnitude,
-        radius: point.radius,
-        x: point.x,
-        y: point.y
-      });
+      continue;
     }
+
+    clusters.push({
+      kind: "cluster",
+      latitude: point.earthquake.latitude,
+      longitude: point.earthquake.longitude,
+      maxMagnitude: point.earthquake.magnitude,
+      radius: point.radius,
+      x: point.x,
+      y: point.y,
+      count: 1,
+      bounds: {
+        minLon: point.earthquake.longitude,
+        minLat: point.earthquake.latitude,
+        maxLon: point.earthquake.longitude,
+        maxLat: point.earthquake.latitude
+      },
+      earthquake: point.earthquake
+    });
+    registerCluster(clusters.length - 1);
   }
 
+  return clusters;
+}
+
+function materializeClusters(clusters: DrawnCluster[]): DrawnItem[] {
   return clusters.flatMap((cluster) => {
-    if (cluster.earthquakes.length === 1) {
-      const earthquake = cluster.earthquakes[0];
+    if (cluster.count === 1 && cluster.earthquake) {
+      const earthquake = cluster.earthquake;
       return {
         earthquake,
         kind: "event",
@@ -397,22 +615,33 @@ function clusterVisiblePoints(points: DrawnPoint[], zoom: number, maxZoom: numbe
         y: cluster.y
       } satisfies DrawnPoint;
     }
-    if (isTerminalZoom) {
-      return expandTerminalCluster(cluster);
-    }
-    cluster.radius = clusterMarkerRadius(cluster.earthquakes.length);
+    cluster.radius = clusterMarkerRadius(cluster.count);
     return cluster;
   });
 }
 
 function addPointToCluster(cluster: DrawnCluster, point: DrawnPoint) {
-  const nextCount = cluster.earthquakes.length + 1;
-  cluster.x = (cluster.x * cluster.earthquakes.length + point.x) / nextCount;
-  cluster.y = (cluster.y * cluster.earthquakes.length + point.y) / nextCount;
-  cluster.latitude = (cluster.latitude * cluster.earthquakes.length + point.earthquake.latitude) / nextCount;
-  cluster.longitude = circularLongitudeMean([...cluster.earthquakes, point.earthquake]);
+  const nextCount = cluster.count + 1;
+  cluster.x = (cluster.x * cluster.count + point.x) / nextCount;
+  cluster.y = (cluster.y * cluster.count + point.y) / nextCount;
+  cluster.latitude = (cluster.latitude * cluster.count + point.earthquake.latitude) / nextCount;
+  cluster.longitude = (cluster.longitude * cluster.count + point.earthquake.longitude) / nextCount;
   cluster.maxMagnitude = maxMagnitude(cluster.maxMagnitude, point.earthquake.magnitude);
-  cluster.earthquakes.push(point.earthquake);
+  cluster.count = nextCount;
+  cluster.earthquake = undefined;
+  if (!cluster.bounds) {
+    cluster.bounds = {
+      minLon: point.earthquake.longitude,
+      minLat: point.earthquake.latitude,
+      maxLon: point.earthquake.longitude,
+      maxLat: point.earthquake.latitude
+    };
+  } else {
+    cluster.bounds.minLon = Math.min(cluster.bounds.minLon, point.earthquake.longitude);
+    cluster.bounds.maxLon = Math.max(cluster.bounds.maxLon, point.earthquake.longitude);
+    cluster.bounds.minLat = Math.min(cluster.bounds.minLat, point.earthquake.latitude);
+    cluster.bounds.maxLat = Math.max(cluster.bounds.maxLat, point.earthquake.latitude);
+  }
 }
 
 function clusterPixelRadius(zoom: number) {
@@ -438,41 +667,9 @@ function clusterMarkerRadius(count: number) {
   return 21;
 }
 
-function expandTerminalCluster(cluster: DrawnCluster): DrawnPoint[] {
-  return cluster.earthquakes.map((earthquake, index) => {
-    const [offsetX, offsetY] = terminalClusterOffset(index);
-    return {
-      earthquake,
-      kind: "event",
-      radius: markerRadius(earthquake.magnitude),
-      x: cluster.x + offsetX,
-      y: cluster.y + offsetY
-    };
-  });
-}
-
-function terminalClusterOffset(index: number) {
-  if (index === 0) {
-    return [0, 0] as const;
-  }
-
-  let ring = 1;
-  let firstIndexInRing = 1;
-  let pointsInRing = 6;
-  while (index >= firstIndexInRing + pointsInRing) {
-    firstIndexInRing += pointsInRing;
-    ring += 1;
-    pointsInRing = ring * 6;
-  }
-
-  const positionInRing = index - firstIndexInRing;
-  const angle = (Math.PI * 2 * positionInRing) / pointsInRing - Math.PI / 2;
-  const distance = 24 + (ring - 1) * 18;
-  return [Math.cos(angle) * distance, Math.sin(angle) * distance] as const;
-}
 
 function drawCluster(context: CanvasRenderingContext2D, cluster: DrawnCluster) {
-  const count = cluster.earthquakes.length;
+  const count = cluster.count;
   const color = magnitudeTone(cluster.maxMagnitude);
   context.beginPath();
   context.arc(cluster.x, cluster.y, cluster.radius, 0, Math.PI * 2);
@@ -513,7 +710,15 @@ function formatClusterCount(count: number) {
 }
 
 function zoomToCluster(map: L.Map, cluster: DrawnCluster) {
-  const bounds = L.latLngBounds(cluster.earthquakes.map((earthquake) => [earthquake.latitude, earthquake.longitude] as L.LatLngTuple));
+  const bounds = cluster.bounds
+    ? L.latLngBounds(
+      [cluster.bounds.minLat, cluster.bounds.minLon] as L.LatLngTuple,
+      [cluster.bounds.maxLat, cluster.bounds.maxLon] as L.LatLngTuple
+    )
+    : L.latLngBounds([
+      [cluster.latitude, cluster.longitude] as L.LatLngTuple,
+      [cluster.latitude, cluster.longitude] as L.LatLngTuple
+    ]);
   const nextZoom = Math.min(resolveMaxZoom(map), map.getZoom() + 3);
   if (bounds.isValid() && !bounds.getNorthEast().equals(bounds.getSouthWest())) {
     map.fitBounds(bounds.pad(0.25), { maxZoom: nextZoom });
@@ -551,24 +756,6 @@ function maxMagnitude(current: number | null, next: number | null) {
     return current;
   }
   return Math.max(current, next);
-}
-
-function circularLongitudeMean(earthquakes: Earthquake[]) {
-  let sin = 0;
-  let cos = 0;
-  for (const earthquake of earthquakes) {
-    const radians = earthquake.longitude * Math.PI / 180;
-    sin += Math.sin(radians);
-    cos += Math.cos(radians);
-  }
-  const longitude = Math.atan2(sin, cos) * 180 / Math.PI;
-  if (longitude > 180) {
-    return longitude - 360;
-  }
-  if (longitude < -180) {
-    return longitude + 360;
-  }
-  return longitude;
 }
 
 function escapeHTML(value: string) {

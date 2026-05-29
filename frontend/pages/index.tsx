@@ -45,6 +45,7 @@ export default function HomePage() {
             <MapShell
               earthquakes={dashboard.earthquakes}
               onBoundsChange={dashboard.setMapBounds}
+              renderLimit={parseLimit(dashboard.appliedFilters.limit)}
             />
           </section>
 
@@ -82,4 +83,15 @@ function StrongestEventCard({ stats }: { stats: ReturnType<typeof useDashboardDa
       </CardContent>
     </Card>
   );
+}
+
+function parseLimit(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
 }
