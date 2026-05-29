@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 
 type Props = {
   earthquakes: Earthquake[];
+  searchEarthquakes?: Earthquake[];
   mapBusy?: boolean;
   onBoundsChange: (bounds: Bounds) => void;
   renderLimit?: number;
@@ -68,7 +69,7 @@ type WorkerResponse = {
   items: Array<WorkerEventItem | WorkerClusterItem>;
 };
 
-export default function EarthquakeMap({ earthquakes, mapBusy = false, onBoundsChange, renderLimit }: Props) {
+export default function EarthquakeMap({ earthquakes, searchEarthquakes, mapBusy = false, onBoundsChange, renderLimit }: Props) {
   const [clusterBusy, setClusterBusy] = useState(false);
   const loadingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showLoading, setShowLoading] = useState(false);
@@ -117,7 +118,7 @@ export default function EarthquakeMap({ earthquakes, mapBusy = false, onBoundsCh
           noWrap
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <MapSearch earthquakes={earthquakes} />
+        <MapSearch earthquakes={searchEarthquakes ?? earthquakes} />
         <BoundsReporter onBoundsChange={onBoundsChange} />
         <CanvasMarkerLayer
           earthquakes={earthquakes}

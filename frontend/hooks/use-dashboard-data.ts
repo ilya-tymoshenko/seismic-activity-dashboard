@@ -29,6 +29,7 @@ export function useDashboardData() {
   const [appliedFilters, setAppliedFilters] = useState<Filters>(defaultFilters);
   const [bounds, setBounds] = useState<Bounds | undefined>();
   const [earthquakes, setEarthquakes] = useState<Earthquake[]>([]);
+  const [searchEarthquakes, setSearchEarthquakes] = useState<Earthquake[]>([]);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
@@ -103,6 +104,15 @@ export function useDashboardData() {
     [],
   );
 
+  const loadSearchEarthquakes = useCallback(async (filters: Filters) => {
+    try {
+      const response = await fetchEarthquakes(filters);
+      setSearchEarthquakes(response.data);
+    } catch {
+      // Keep the previous search list when the request fails.
+    }
+  }, []);
+
   useEffect(() => {
     void loadSummary(appliedFilters);
   }, [appliedFilters, loadSummary]);
@@ -110,6 +120,10 @@ export function useDashboardData() {
   useEffect(() => {
     void loadEarthquakes(appliedFilters, bounds);
   }, [appliedFilters, bounds, loadEarthquakes]);
+
+  useEffect(() => {
+    void loadSearchEarthquakes(appliedFilters);
+  }, [appliedFilters, loadSearchEarthquakes]);
 
   const setMapBounds = useCallback((nextBounds: Bounds) => {
     setBounds((current) => {
@@ -139,8 +153,15 @@ export function useDashboardData() {
     await Promise.all([
       loadSummary(appliedFilters),
       loadEarthquakes(appliedFilters, bounds),
+      loadSearchEarthquakes(appliedFilters),
     ]);
-  }, [appliedFilters, bounds, loadEarthquakes, loadSummary]);
+  }, [
+    appliedFilters,
+    bounds,
+    loadEarthquakes,
+    loadSearchEarthquakes,
+    loadSummary,
+  ]);
 
   const waitForJob = useCallback(async (jobId: string) => {
     for (;;) {
@@ -199,6 +220,7 @@ export function useDashboardData() {
         await Promise.all([
           loadSummary(appliedFiltersRef.current),
           loadEarthquakes(appliedFiltersRef.current, boundsRef.current),
+          loadSearchEarthquakes(appliedFiltersRef.current),
         ]);
       } catch (err) {
         if (!stopped) {
@@ -278,6 +300,7 @@ export function useDashboardData() {
       await Promise.all([
         loadSummary(nextFilters),
         loadEarthquakes(nextFilters, bounds),
+        loadSearchEarthquakes(nextFilters),
       ]);
     } catch (err) {
       setError(
@@ -314,6 +337,7 @@ export function useDashboardData() {
     draftFilters,
     earthquakeCount: earthquakes.length,
     earthquakes,
+    searchEarthquakes,
     error,
     handleCancelAction,
     handleImportFiltered,
