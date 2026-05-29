@@ -87,6 +87,7 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
   const redrawRef = useRef<() => void>(() => undefined);
   const popupRef = useRef<L.Popup | null>(null);
   const popupEarthquakeIDRef = useRef<string | null>(null);
+  const isZoomingRef = useRef(false);
 
   useEffect(() => {
     earthquakesRef.current = earthquakes;
@@ -121,7 +122,22 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       L.DomUtil.setPosition(canvas, topLeft);
     };
 
+    const clearCanvas = () => {
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+      resizeCanvas();
+      const size = map.getSize();
+      const pixelRatio = window.devicePixelRatio || 1;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, size.x, size.y);
+    };
+
     const redraw = () => {
+      if (isZoomingRef.current) {
+        return;
+      }
       const context = canvas.getContext("2d");
       if (!context) {
         return;
@@ -214,6 +230,18 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       map.getContainer().style.cursor = "";
     };
 
+    const handleZoomStart = () => {
+      isZoomingRef.current = true;
+      itemsRef.current = [];
+      clearCanvas();
+      closePopupIfHidden([], popupRef, popupEarthquakeIDRef);
+    };
+
+    const handleZoomEnd = () => {
+      isZoomingRef.current = false;
+      redraw();
+    };
+
     redrawRef.current = redraw;
     redraw();
 
@@ -224,7 +252,8 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
       moveend: redraw,
       resize: redraw,
       viewreset: redraw,
-      zoomend: redraw
+      zoomstart: handleZoomStart,
+      zoomend: handleZoomEnd
     });
 
     return () => {
@@ -235,7 +264,8 @@ function CanvasMarkerLayer({ earthquakes }: { earthquakes: Earthquake[] }) {
         moveend: redraw,
         resize: redraw,
         viewreset: redraw,
-        zoomend: redraw
+        zoomstart: handleZoomStart,
+        zoomend: handleZoomEnd
       });
       popupRef.current?.remove();
       popupEarthquakeIDRef.current = null;
