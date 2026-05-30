@@ -210,13 +210,65 @@ function depthCategoryExpression(alias = "") {
   END`;
 }
 
-function mapSettings(latitude = "latitude", longitude = "longitude", metric = "event_count") {
-  return {
-    "map.type": "pin",
-    "map.latitude_column": latitude,
-    "map.longitude_column": longitude,
-    "map.metric_column": metric
-  };
+function vizLine(x, y) {
+  return { "graph.dimensions": [x], "graph.metrics": [y] };
+}
+
+function vizBar(x, y) {
+  return { "graph.dimensions": [x], "graph.metrics": [y] };
+}
+
+function vizMultiLine(dimensions, metrics) {
+  return { "graph.dimensions": dimensions, "graph.metrics": metrics };
+}
+
+async function findActiveCardByName(sessionId, name) {
+  const search = await api(`/api/search?models=card&q=${encodeURIComponent(name)}`, {
+    headers: authHeaders(sessionId)
+  });
+  const list = searchResults(search);
+  return list.find((card) => card.name === name && !card.archived) || null;
+}
+
+async function archiveCardsByName(sessionId, names = []) {
+  for (const name of names) {
+    const card = await findActiveCardByName(sessionId, name);
+    if (!card) {
+      continue;
+    }
+    try {
+      await api(`/api/card/${card.id}`, {
+        method: "PUT",
+        headers: authHeaders(sessionId),
+        body: JSON.stringify({ archived: true })
+      });
+      console.log(`Archived card: ${name} (#${card.id})`);
+    } catch (error) {
+      console.log(`Failed to archive card: ${name} (#${card.id}): ${error.message}`);
+    }
+  }
+}
+
+async function archiveDashboardsByName(sessionId, names = []) {
+  if (!names.length) {
+    return;
+  }
+
+  const dashboards = await api("/api/dashboard", { headers: authHeaders(sessionId) });
+  const list = Array.isArray(dashboards) ? dashboards : dashboards.data || [];
+  const targets = list.filter((dashboard) => names.includes(dashboard.name) && !dashboard.archived);
+  for (const dashboard of targets) {
+    try {
+      await api(`/api/dashboard/${dashboard.id}`, {
+        method: "PUT",
+        headers: authHeaders(sessionId),
+        body: JSON.stringify({ archived: true })
+      });
+      console.log(`Archived dashboard: ${dashboard.name} (#${dashboard.id})`);
+    } catch (error) {
+      console.log(`Failed to archive dashboard: ${dashboard.name} (#${dashboard.id}): ${error.message}`);
+    }
+  }
 }
 
 async function ensureDatabase(sessionId) {
@@ -238,45 +290,32 @@ async function ensureDatabase(sessionId) {
 }
 
 async function ensureDashboards(sessionId, databaseId) {
+  await archiveDashboardsByName(sessionId, [
+    "Earthquake Severity & Depth"
+  ]);
+
+  await archiveCardsByName(sessionId, [
+    "Recent high-risk earthquakes"
+  ]);
+
   const dashboards = [
     {
-      name: "Earthquake BI Overview",
-      description: "Executive overview for the Big Data earthquake analytics prototype.",
+      name: "Earthquake Temporal Patterns",
+      description: "Time-based trends, seasonality, and activity volume. All charts use event counts only.",
       parameters: BI_DASHBOARD_PARAMETERS,
       cards: [
-        await ensureCard(sessionId, databaseId, "Total events", "scalar", `
+        await ensureCard(sessionId, databaseId, "Total earthquake events", "scalar", `
 SELECT COUNT(*) AS total_events
 FROM earthquakes e
 WHERE 1=1
 ${biFilterWhere("e")};
 `, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Strongest magnitude", "scalar", `
-SELECT ROUND(MAX(magnitude)::numeric, 2) AS strongest_magnitude
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Significant events", "scalar", `
-SELECT COUNT(*) AS significant_events
-FROM earthquakes e
-WHERE magnitude >= 5
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Tsunami events", "scalar", `
-SELECT COUNT(*) AS tsunami_events
-FROM earthquakes e
-WHERE tsunami = 1
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Daily seismic activity", "line", `
-SELECT eq_date, event_count, avg_magnitude, max_magnitude, tsunami_count
+        await ensureCard(sessionId, databaseId, "Daily earthquake count", "line", `
+SELECT eq_date, event_count
 FROM (
   SELECT
     DATE(e.time) AS eq_date,
-    COUNT(*) AS event_count,
-    AVG(e.magnitude) AS avg_magnitude,
-    MAX(e.magnitude) AS max_magnitude,
-    COUNT(*) FILTER (WHERE e.tsunami = 1) AS tsunami_count
+    COUNT(*) AS event_count
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
@@ -285,94 +324,13 @@ FROM (
   LIMIT 366
 ) latest_days
 ORDER BY eq_date ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Magnitude distribution", "bar", `
-SELECT
-  ${magnitudeCategoryExpression("e")} AS magnitude_category,
-  COUNT(*) AS event_count,
-  AVG(e.depth) AS avg_depth,
-  MAX(e.magnitude) AS max_magnitude
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY magnitude_category
-ORDER BY event_count DESC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Depth distribution", "bar", `
-SELECT
-  ${depthCategoryExpression("e")} AS depth_category,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.depth) AS max_depth
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY depth_category
-ORDER BY event_count DESC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Strongest earthquakes", "table", `
-SELECT e.time, e.magnitude, e.depth, e.place, e.latitude, e.longitude, e.tsunami, e.alert
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-ORDER BY e.magnitude DESC NULLS LAST, e.time DESC
-LIMIT 50;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Top active places", "table", `
-SELECT
-  COALESCE(NULLIF(e.place, ''), 'Unknown') AS place,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude,
-  AVG(e.depth) AS avg_depth
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY COALESCE(NULLIF(e.place, ''), 'Unknown')
-ORDER BY event_count DESC
-LIMIT 50;
-`, { filters: true })
-      ],
-      positions: [
-        { row: 0, col: 0, size_x: 6, size_y: 4 },
-        { row: 0, col: 6, size_x: 6, size_y: 4 },
-        { row: 0, col: 12, size_x: 6, size_y: 4 },
-        { row: 0, col: 18, size_x: 6, size_y: 4 },
-        { row: 4, col: 0, size_x: 16, size_y: 8 },
-        { row: 4, col: 16, size_x: 8, size_y: 8 },
-        { row: 12, col: 0, size_x: 8, size_y: 8 },
-        { row: 12, col: 8, size_x: 16, size_y: 8 },
-        { row: 20, col: 0, size_x: 24, size_y: 8 }
-      ]
-    },
-    {
-      name: "Earthquake Temporal Trends",
-      description: "Long-term activity trends by year, month, magnitude, and tsunami signal.",
-      parameters: BI_DASHBOARD_PARAMETERS,
-      cards: [
-        await ensureCard(sessionId, databaseId, "Yearly seismic activity", "line", `
-SELECT
-  DATE_TRUNC('year', e.time)::date AS eq_year,
-  COUNT(*) AS event_count,
-  COUNT(*) FILTER (WHERE e.magnitude >= 5) AS significant_count,
-  COUNT(*) FILTER (WHERE e.tsunami = 1) AS tsunami_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY DATE_TRUNC('year', e.time)::date
-ORDER BY eq_year ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Monthly seismic activity", "line", `
-SELECT eq_month, event_count, significant_count, tsunami_count, avg_magnitude
+`, { filters: true, visualizationSettings: vizLine("eq_date", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Monthly earthquake count", "line", `
+SELECT eq_month, event_count
 FROM (
   SELECT
     DATE_TRUNC('month', e.time)::date AS eq_month,
-    COUNT(*) AS event_count,
-    COUNT(*) FILTER (WHERE e.magnitude >= 5) AS significant_count,
-    COUNT(*) FILTER (WHERE e.tsunami = 1) AS tsunami_count,
-    AVG(e.magnitude) AS avg_magnitude
+    COUNT(*) AS event_count
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
@@ -381,13 +339,84 @@ FROM (
   LIMIT 120
 ) latest_months
 ORDER BY eq_month ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Monthly significant earthquakes", "bar", `
-SELECT eq_month, significant_count, max_magnitude
+`, { filters: true, visualizationSettings: vizLine("eq_month", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Monthly significant earthquake count", "line", `
+SELECT eq_month, significant_count
 FROM (
   SELECT
     DATE_TRUNC('month', e.time)::date AS eq_month,
-    COUNT(*) FILTER (WHERE e.magnitude >= 5) AS significant_count,
+    COUNT(*) FILTER (WHERE e.magnitude >= 5) AS significant_count
+  FROM earthquakes e
+  WHERE 1=1
+  ${biFilterWhere("e")}
+  GROUP BY DATE_TRUNC('month', e.time)::date
+  ORDER BY eq_month DESC
+  LIMIT 120
+) latest_months
+ORDER BY eq_month ASC;
+`, { filters: true, visualizationSettings: vizLine("eq_month", "significant_count") }),
+        await ensureCard(sessionId, databaseId, "Earthquakes by day of week", "bar", `
+SELECT day_of_week, event_count
+FROM (
+  SELECT
+    EXTRACT(ISODOW FROM e.time)::int AS dow,
+    TO_CHAR(e.time, 'Dy') AS day_of_week,
+    COUNT(*) AS event_count
+  FROM earthquakes e
+  WHERE 1=1
+  ${biFilterWhere("e")}
+  GROUP BY dow, day_of_week
+) d
+ORDER BY dow;
+`, { filters: true, visualizationSettings: vizBar("day_of_week", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Earthquakes by hour of day", "bar", `
+SELECT hour_of_day, event_count
+FROM (
+  SELECT
+    EXTRACT(HOUR FROM e.time)::int AS hour_of_day,
+    COUNT(*) AS event_count
+  FROM earthquakes e
+  WHERE 1=1
+  ${biFilterWhere("e")}
+  GROUP BY hour_of_day
+) h
+ORDER BY hour_of_day;
+`, { filters: true, visualizationSettings: vizBar("hour_of_day", "event_count") })
+      ],
+      positions: [
+        { row: 0, col: 0, size_x: 6, size_y: 4 },
+        { row: 0, col: 6, size_x: 18, size_y: 8 },
+        { row: 8, col: 0, size_x: 12, size_y: 8 },
+        { row: 8, col: 12, size_x: 12, size_y: 8 },
+        { row: 16, col: 0, size_x: 12, size_y: 8 },
+        { row: 16, col: 12, size_x: 12, size_y: 8 }
+      ]
+    },
+    {
+      name: "Earthquake Magnitude Trends",
+      description: "Magnitude and depth trends over time. No category distribution charts.",
+      parameters: BI_DASHBOARD_PARAMETERS,
+      cards: [
+        await ensureCard(sessionId, databaseId, "Daily maximum magnitude", "line", `
+SELECT eq_date, max_magnitude
+FROM (
+  SELECT
+    DATE(e.time) AS eq_date,
+    MAX(e.magnitude) AS max_magnitude
+  FROM earthquakes e
+  WHERE 1=1
+  ${biFilterWhere("e")}
+  GROUP BY DATE(e.time)
+  ORDER BY eq_date DESC
+  LIMIT 366
+) latest_days
+ORDER BY eq_date ASC;
+`, { filters: true, visualizationSettings: vizLine("eq_date", "max_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Monthly maximum magnitude", "line", `
+SELECT eq_month, max_magnitude
+FROM (
+  SELECT
+    DATE_TRUNC('month', e.time)::date AS eq_month,
     MAX(e.magnitude) AS max_magnitude
   FROM earthquakes e
   WHERE 1=1
@@ -397,214 +426,106 @@ FROM (
   LIMIT 120
 ) latest_months
 ORDER BY eq_month ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Event type distribution", "bar", `
-SELECT
-  COALESCE(NULLIF(e.type, ''), 'unknown') AS event_type,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY COALESCE(NULLIF(e.type, ''), 'unknown')
-ORDER BY event_count DESC
-LIMIT 20;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Data coverage by year", "table", `
-SELECT
-  DATE_TRUNC('year', e.time)::date AS eq_year,
-  COUNT(*) AS event_count,
-  COUNT(*) FILTER (WHERE e.magnitude >= 5) AS significant_count,
-  COUNT(*) FILTER (WHERE e.tsunami = 1) AS tsunami_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude,
-  AVG(e.depth) AS avg_depth
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY DATE_TRUNC('year', e.time)::date
-ORDER BY eq_year DESC;
-`, { filters: true })
-      ],
-      positions: [
-        { row: 0, col: 0, size_x: 12, size_y: 8 },
-        { row: 0, col: 12, size_x: 12, size_y: 8 },
-        { row: 8, col: 0, size_x: 12, size_y: 8 },
-        { row: 8, col: 12, size_x: 12, size_y: 8 },
-        { row: 16, col: 0, size_x: 24, size_y: 8 }
-      ]
-    },
-    {
-      name: "Earthquake Risk Monitor",
-      description: "Focused view for stronger earthquakes, alert levels, tsunami events, and depth/magnitude risk patterns.",
-      parameters: BI_DASHBOARD_PARAMETERS,
-      cards: [
-        await ensureCard(sessionId, databaseId, "Alert distribution", "bar", `
-SELECT
-  COALESCE(NULLIF(e.alert, ''), 'none') AS alert_level,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude,
-  COUNT(*) FILTER (WHERE e.tsunami = 1) AS tsunami_count
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY COALESCE(NULLIF(e.alert, ''), 'none')
-ORDER BY event_count DESC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Tsunami activity by month", "line", `
-SELECT eq_month, tsunami_count, avg_magnitude, max_magnitude, avg_depth
+`, { filters: true, visualizationSettings: vizLine("eq_month", "max_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Monthly average magnitude", "line", `
+SELECT eq_month, avg_magnitude
 FROM (
   SELECT
     DATE_TRUNC('month', e.time)::date AS eq_month,
-    COUNT(*) AS tsunami_count,
-    AVG(e.magnitude) AS avg_magnitude,
-    MAX(e.magnitude) AS max_magnitude,
-    AVG(e.depth) AS avg_depth
+    AVG(e.magnitude) AS avg_magnitude
   FROM earthquakes e
-  WHERE e.tsunami = 1
+  WHERE e.magnitude IS NOT NULL
   ${biFilterWhere("e")}
   GROUP BY DATE_TRUNC('month', e.time)::date
   ORDER BY eq_month DESC
   LIMIT 120
 ) latest_months
 ORDER BY eq_month ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Depth and magnitude matrix", "table", `
-SELECT
-  ${depthCategoryExpression("e")} AS depth_category,
-  ${magnitudeCategoryExpression("e")} AS magnitude_category,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  AVG(e.depth) AS avg_depth
+`, { filters: true, visualizationSettings: vizLine("eq_month", "avg_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Monthly average depth", "line", `
+SELECT eq_month, avg_depth
+FROM (
+  SELECT
+    DATE_TRUNC('month', e.time)::date AS eq_month,
+    AVG(e.depth) AS avg_depth
+  FROM earthquakes e
+  WHERE e.depth IS NOT NULL
+  ${biFilterWhere("e")}
+  GROUP BY DATE_TRUNC('month', e.time)::date
+  ORDER BY eq_month DESC
+  LIMIT 120
+) latest_months
+ORDER BY eq_month ASC;
+`, { filters: true, visualizationSettings: vizLine("eq_month", "avg_depth") }),
+        await ensureCard(sessionId, databaseId, "Strongest earthquakes (table)", "table", `
+SELECT e.time, e.magnitude, e.depth, e.place, e.type, e.alert
 FROM earthquakes e
 WHERE 1=1
 ${biFilterWhere("e")}
-GROUP BY depth_category, magnitude_category
-ORDER BY depth_category, magnitude_category;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "High-risk recent earthquakes", "table", `
-SELECT
-  e.time,
-  e.magnitude,
-  e.depth,
-  e.place,
-  e.latitude,
-  e.longitude,
-  e.tsunami,
-  e.alert,
-  CONCAT_WS(
-    ', ',
-    CASE WHEN e.magnitude >= 6 THEN 'magnitude >= 6' END,
-    CASE WHEN e.tsunami = 1 THEN 'tsunami' END,
-    CASE WHEN e.alert IN ('orange', 'red') THEN 'high alert' END
-  ) AS risk_reason
-FROM earthquakes e
-WHERE (e.magnitude >= 6 OR e.tsunami = 1 OR e.alert IN ('orange', 'red'))
-${biFilterWhere("e")}
-ORDER BY e.time DESC
+ORDER BY e.magnitude DESC NULLS LAST, e.time DESC
 LIMIT 50;
 `, { filters: true })
       ],
       positions: [
-        { row: 0, col: 0, size_x: 12, size_y: 8 },
-        { row: 0, col: 12, size_x: 12, size_y: 8 },
-        { row: 8, col: 0, size_x: 10, size_y: 8 },
-        { row: 8, col: 10, size_x: 14, size_y: 8 }
+        { row: 0, col: 0, size_x: 24, size_y: 8 },
+        { row: 8, col: 0, size_x: 12, size_y: 8 },
+        { row: 8, col: 12, size_x: 12, size_y: 8 },
+        { row: 16, col: 0, size_x: 24, size_y: 8 },
+        { row: 24, col: 0, size_x: 24, size_y: 8 }
       ]
     },
     {
-      name: "Earthquake Geographic Hotspots",
-      description: "Regional activity hotspots and location tables for spatial exploration.",
+      name: "Earthquake Regional Activity",
+      description: "Regional patterns and notable events without maps. Counts, magnitudes, and depths are kept in separate charts.",
       parameters: BI_DASHBOARD_PARAMETERS,
       cards: [
-        await ensureCard(sessionId, databaseId, "Regional hotspot map", "map", `
-WITH bucketed AS (
+        await ensureCard(sessionId, databaseId, "Most active earthquake places", "bar", `
+SELECT place, event_count
+FROM (
   SELECT
-    FLOOR(e.latitude / 10) * 10 AS lat_min,
-    FLOOR(e.longitude / 10) * 10 AS lon_min,
-    e.magnitude,
-    e.depth,
-    e.tsunami
+    COALESCE(NULLIF(e.place, ''), 'Unknown') AS place,
+    COUNT(*) AS event_count
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
-)
-SELECT
-  lat_min + 5 AS latitude,
-  lon_min + 5 AS longitude,
-  COUNT(*) AS event_count,
-  AVG(magnitude) AS avg_magnitude,
-  MAX(magnitude) AS max_magnitude,
-  AVG(depth) AS avg_depth,
-  COUNT(*) FILTER (WHERE tsunami = 1) AS tsunami_count
-FROM bucketed
-GROUP BY lat_min, lon_min
-HAVING COUNT(*) >= 5
-ORDER BY event_count DESC
-LIMIT 1000;
-`, { filters: true, visualizationSettings: mapSettings("latitude", "longitude", "event_count") }),
-        await ensureCard(sessionId, databaseId, "High-risk event map", "map", `
-SELECT
-  e.latitude,
-  e.longitude,
-  e.magnitude,
-  e.depth,
-  e.place,
-  e.time,
-  e.tsunami,
-  e.alert
-FROM earthquakes e
-WHERE (e.magnitude >= 6 OR e.tsunami = 1 OR e.alert IN ('orange', 'red'))
-${biFilterWhere("e")}
-ORDER BY e.time DESC
-LIMIT 1000;
-`, { filters: true, visualizationSettings: mapSettings("latitude", "longitude", "magnitude") }),
-        await ensureCard(sessionId, databaseId, "Regional hotspot grid", "table", `
-WITH bucketed AS (
+  GROUP BY COALESCE(NULLIF(e.place, ''), 'Unknown')
+  ORDER BY event_count DESC
+  LIMIT 20
+) top_places
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("place", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Highest magnitude by place", "bar", `
+SELECT place, max_magnitude
+FROM (
   SELECT
-    FLOOR(e.latitude / 10) * 10 AS lat_min,
-    FLOOR(e.longitude / 10) * 10 AS lon_min,
-    e.magnitude,
-    e.depth,
-    e.tsunami
+    COALESCE(NULLIF(e.place, ''), 'Unknown') AS place,
+    MAX(e.magnitude) AS max_magnitude
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
-)
-SELECT
-  lat_min,
-  lon_min,
-  lat_min + 5 AS latitude,
-  lon_min + 5 AS longitude,
-  COUNT(*) AS event_count,
-  AVG(magnitude) AS avg_magnitude,
-  MAX(magnitude) AS max_magnitude,
-  AVG(depth) AS avg_depth,
-  COUNT(*) FILTER (WHERE tsunami = 1) AS tsunami_count
-FROM bucketed
-GROUP BY lat_min, lon_min
-HAVING COUNT(*) >= 5
-ORDER BY event_count DESC
-LIMIT 100;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Top active places", "table", `
-SELECT
-  COALESCE(NULLIF(e.place, ''), 'Unknown') AS place,
-  COUNT(*) AS event_count,
-  AVG(e.magnitude) AS avg_magnitude,
-  MAX(e.magnitude) AS max_magnitude,
-  AVG(e.depth) AS avg_depth
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")}
-GROUP BY COALESCE(NULLIF(e.place, ''), 'Unknown')
-ORDER BY event_count DESC
-LIMIT 50;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Strongest earthquakes", "table", `
-SELECT e.time, e.magnitude, e.depth, e.place, e.latitude, e.longitude, e.tsunami, e.alert
+  GROUP BY COALESCE(NULLIF(e.place, ''), 'Unknown')
+  ORDER BY max_magnitude DESC NULLS LAST
+  LIMIT 20
+) top_places
+ORDER BY max_magnitude DESC NULLS LAST;
+`, { filters: true, visualizationSettings: vizBar("place", "max_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Average depth by place", "bar", `
+SELECT place, avg_depth
+FROM (
+  SELECT
+    COALESCE(NULLIF(e.place, ''), 'Unknown') AS place,
+    AVG(e.depth) AS avg_depth
+  FROM earthquakes e
+  WHERE e.depth IS NOT NULL
+  ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.place, ''), 'Unknown')
+  ORDER BY avg_depth DESC
+  LIMIT 20
+) top_places
+ORDER BY avg_depth DESC;
+`, { filters: true, visualizationSettings: vizBar("place", "avg_depth") }),
+        await ensureCard(sessionId, databaseId, "Strongest recent earthquakes", "table", `
+SELECT e.time, e.magnitude, e.depth, e.place, e.type, e.alert
 FROM earthquakes e
 WHERE 1=1
 ${biFilterWhere("e")}
@@ -615,132 +536,223 @@ LIMIT 50;
       positions: [
         { row: 0, col: 0, size_x: 12, size_y: 9 },
         { row: 0, col: 12, size_x: 12, size_y: 9 },
-        { row: 9, col: 0, size_x: 24, size_y: 8 },
-        { row: 17, col: 0, size_x: 12, size_y: 8 },
-        { row: 17, col: 12, size_x: 12, size_y: 8 }
+        { row: 9, col: 0, size_x: 24, size_y: 9 },
+        { row: 18, col: 0, size_x: 24, size_y: 8 }
       ]
     },
     {
-      name: "Earthquake Data Coverage & Quality",
-      description: "Dataset coverage, missing fields, ingestion recency, magnitude thresholds, and import state.",
+      name: "Earthquake Classifications",
+      description: "Event types, alert levels, and their characteristics. No mixed-unit comparisons within charts.",
       parameters: BI_DASHBOARD_PARAMETERS,
       cards: [
-        await ensureCard(sessionId, databaseId, "Quality: total events", "scalar", `
-SELECT COUNT(*) AS total_events
-FROM earthquakes e
-WHERE 1=1
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: missing magnitude", "scalar", `
-SELECT COUNT(*) AS missing_magnitude
-FROM earthquakes e
-WHERE e.magnitude IS NULL
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: missing depth", "scalar", `
-SELECT COUNT(*) AS missing_depth
-FROM earthquakes e
-WHERE e.depth IS NULL
-${biFilterWhere("e")};
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: coverage by threshold", "bar", `
-SELECT
-  threshold.label,
-  threshold.min_magnitude,
-  COUNT(e.id) AS event_count
-FROM (
-  VALUES
-    ('all', NULL::double precision),
-    ('1.0+', 1.0),
-    ('2.5+', 2.5),
-    ('4.5+', 4.5),
-    ('5.0+', 5.0),
-    ('6.0+', 6.0),
-    ('7.0+', 7.0)
-) AS threshold(label, min_magnitude)
-LEFT JOIN earthquakes e
-  ON (threshold.min_magnitude IS NULL OR e.magnitude >= threshold.min_magnitude)
-  ${biFilterWhere("e")}
-GROUP BY threshold.label, threshold.min_magnitude
-ORDER BY threshold.min_magnitude NULLS FIRST;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: recent ingestion", "line", `
-SELECT ingest_date, event_count, oldest_event_time, newest_event_time
+        await ensureCard(sessionId, databaseId, "Earthquake type distribution", "bar", `
+SELECT event_type, event_count
 FROM (
   SELECT
-    DATE(e.ingested_at) AS ingest_date,
-    COUNT(*) AS event_count,
-    MIN(e.time) AS oldest_event_time,
-    MAX(e.time) AS newest_event_time
+    COALESCE(NULLIF(e.type, ''), 'unknown') AS event_type,
+    COUNT(*) AS event_count
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
-  GROUP BY DATE(e.ingested_at)
-  ORDER BY ingest_date DESC
-  LIMIT 90
-) recent
-ORDER BY ingest_date ASC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: missing fields", "bar", `
-WITH counts AS (
+  GROUP BY COALESCE(NULLIF(e.type, ''), 'unknown')
+  ORDER BY event_count DESC
+  LIMIT 15
+) top_types
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("event_type", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Earthquake alert distribution", "bar", `
+SELECT alert_level, event_count
+FROM (
   SELECT
-    COUNT(*)::numeric AS total_events,
-    COUNT(*) FILTER (WHERE e.magnitude IS NULL) AS missing_magnitude,
-    COUNT(*) FILTER (WHERE e.depth IS NULL) AS missing_depth,
-    COUNT(*) FILTER (WHERE e.place IS NULL OR e.place = '') AS missing_place,
-    COUNT(*) FILTER (WHERE e.alert IS NULL OR e.alert = '') AS missing_alert,
-    COUNT(*) FILTER (WHERE e.type IS NULL OR e.type = '') AS missing_type
+    COALESCE(NULLIF(e.alert, ''), 'none') AS alert_level,
+    COUNT(*) AS event_count
   FROM earthquakes e
   WHERE 1=1
   ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.alert, ''), 'none')
+  ORDER BY event_count DESC
+) d
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("alert_level", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Average magnitude by event type", "bar", `
+SELECT event_type, avg_magnitude
+FROM (
+  SELECT
+    COALESCE(NULLIF(e.type, ''), 'unknown') AS event_type,
+    AVG(e.magnitude) AS avg_magnitude
+  FROM earthquakes e
+  WHERE e.magnitude IS NOT NULL
+  ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.type, ''), 'unknown')
+  ORDER BY avg_magnitude DESC
+  LIMIT 20
+) d
+ORDER BY avg_magnitude DESC;
+`, { filters: true, visualizationSettings: vizBar("event_type", "avg_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Average depth by alert level", "bar", `
+SELECT alert_level, avg_depth
+FROM (
+  SELECT
+    COALESCE(NULLIF(e.alert, ''), 'none') AS alert_level,
+    AVG(e.depth) AS avg_depth
+  FROM earthquakes e
+  WHERE e.depth IS NOT NULL
+  ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.alert, ''), 'none')
+  ORDER BY avg_depth DESC
+) d
+ORDER BY avg_depth DESC;
+`, { filters: true, visualizationSettings: vizBar("alert_level", "avg_depth") }),
+        await ensureCard(sessionId, databaseId, "Monthly top type trends", "line", `
+WITH top_types AS (
+  SELECT COALESCE(NULLIF(e.type, ''), 'unknown') AS event_type
+  FROM earthquakes e
+  WHERE 1=1
+  ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.type, ''), 'unknown')
+  ORDER BY COUNT(*) DESC
+  LIMIT 6
 )
-SELECT 'magnitude' AS field_name, missing_magnitude AS missing_count, ROUND((missing_magnitude::numeric / NULLIF(total_events, 0)) * 100, 2) AS missing_percent
-FROM counts
-UNION ALL
-SELECT 'depth', missing_depth, ROUND((missing_depth::numeric / NULLIF(total_events, 0)) * 100, 2)
-FROM counts
-UNION ALL
-SELECT 'place', missing_place, ROUND((missing_place::numeric / NULLIF(total_events, 0)) * 100, 2)
-FROM counts
-UNION ALL
-SELECT 'alert', missing_alert, ROUND((missing_alert::numeric / NULLIF(total_events, 0)) * 100, 2)
-FROM counts
-UNION ALL
-SELECT 'type', missing_type, ROUND((missing_type::numeric / NULLIF(total_events, 0)) * 100, 2)
-FROM counts
-ORDER BY missing_count DESC;
-`, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: data by year", "table", `
 SELECT
-  DATE_TRUNC('year', e.time)::date AS eq_year,
-  COUNT(*) AS event_count,
-  COUNT(*) FILTER (WHERE e.magnitude IS NULL) AS missing_magnitude,
-  COUNT(*) FILTER (WHERE e.depth IS NULL) AS missing_depth,
-  COUNT(*) FILTER (WHERE e.place IS NULL OR e.place = '') AS missing_place,
-  COUNT(*) FILTER (WHERE e.alert IS NULL OR e.alert = '') AS missing_alert,
-  COUNT(*) FILTER (WHERE e.magnitude >= 2.5) AS magnitude_2_5_plus,
-  COUNT(*) FILTER (WHERE e.magnitude >= 5) AS magnitude_5_plus
+  DATE_TRUNC('month', e.time)::date AS eq_month,
+  COALESCE(NULLIF(e.type, ''), 'unknown') AS event_type,
+  COUNT(*) AS event_count
+FROM earthquakes e
+JOIN top_types t
+  ON t.event_type = COALESCE(NULLIF(e.type, ''), 'unknown')
+WHERE 1=1
+${biFilterWhere("e")}
+GROUP BY DATE_TRUNC('month', e.time)::date, COALESCE(NULLIF(e.type, ''), 'unknown')
+ORDER BY eq_month ASC, event_type ASC;
+`, { filters: true, visualizationSettings: vizMultiLine(["eq_month", "event_type"], ["event_count"]) }),
+        await ensureCard(sessionId, databaseId, "Recent significant earthquakes", "table", `
+SELECT e.time, e.magnitude, e.depth, e.place, e.type, e.alert
 FROM earthquakes e
 WHERE 1=1
 ${biFilterWhere("e")}
-GROUP BY DATE_TRUNC('year', e.time)::date
-ORDER BY eq_year DESC;
+ORDER BY e.magnitude DESC NULLS LAST, e.time DESC
+LIMIT 50;
+`, { filters: true })
+      ],
+      positions: [
+        { row: 0, col: 0, size_x: 12, size_y: 8 },
+        { row: 0, col: 12, size_x: 12, size_y: 8 },
+        { row: 8, col: 0, size_x: 12, size_y: 8 },
+        { row: 8, col: 12, size_x: 12, size_y: 8 },
+        { row: 16, col: 0, size_x: 24, size_y: 8 },
+        { row: 24, col: 0, size_x: 24, size_y: 8 }
+      ]
+    },
+    {
+      name: "Tsunami Event Analysis",
+      description: "Tsunami-specific patterns. Only dashboard with tsunami-focused charts. No maps.",
+      parameters: BI_DASHBOARD_PARAMETERS,
+      cards: [
+        await ensureCard(sessionId, databaseId, "Total tsunami events", "scalar", `
+SELECT COUNT(*) AS tsunami_events
+FROM earthquakes e
+WHERE e.tsunami = 1
+${biFilterWhere("e")};
 `, { filters: true }),
-        await ensureCard(sessionId, databaseId, "Quality: import state", "table", `
-SELECT key, updated_at, job_id, job_kind, job_status, job_message, progress, raw_value
-FROM vw_import_state_status
-ORDER BY updated_at DESC;
-`)
+        await ensureCard(sessionId, databaseId, "Tsunami maximum magnitude", "scalar", `
+SELECT ROUND(MAX(e.magnitude)::numeric, 2) AS tsunami_max_magnitude
+FROM earthquakes e
+WHERE e.tsunami = 1
+${biFilterWhere("e")};
+`, { filters: true }),
+        await ensureCard(sessionId, databaseId, "Monthly tsunami event count", "line", `
+SELECT eq_month, tsunami_count
+FROM (
+  SELECT
+    DATE_TRUNC('month', e.time)::date AS eq_month,
+    COUNT(*) AS tsunami_count
+  FROM earthquakes e
+  WHERE e.tsunami = 1
+  ${biFilterWhere("e")}
+  GROUP BY DATE_TRUNC('month', e.time)::date
+  ORDER BY eq_month DESC
+  LIMIT 120
+) latest_months
+ORDER BY eq_month ASC;
+`, { filters: true, visualizationSettings: vizLine("eq_month", "tsunami_count") }),
+        await ensureCard(sessionId, databaseId, "Average tsunami magnitude by month", "line", `
+SELECT eq_month, avg_magnitude
+FROM (
+  SELECT
+    DATE_TRUNC('month', e.time)::date AS eq_month,
+    AVG(e.magnitude) AS avg_magnitude
+  FROM earthquakes e
+  WHERE e.tsunami = 1 AND e.magnitude IS NOT NULL
+  ${biFilterWhere("e")}
+  GROUP BY DATE_TRUNC('month', e.time)::date
+  ORDER BY eq_month DESC
+  LIMIT 120
+) latest_months
+ORDER BY eq_month ASC;
+`, { filters: true, visualizationSettings: vizLine("eq_month", "avg_magnitude") }),
+        await ensureCard(sessionId, databaseId, "Tsunami magnitude categories", "bar", `
+SELECT magnitude_category, event_count
+FROM (
+  SELECT
+    ${magnitudeCategoryExpression("e")} AS magnitude_category,
+    COUNT(*) AS event_count
+  FROM earthquakes e
+  WHERE e.tsunami = 1
+  ${biFilterWhere("e")}
+  GROUP BY magnitude_category
+) d
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("magnitude_category", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Tsunami depth categories", "bar", `
+SELECT depth_category, event_count
+FROM (
+  SELECT
+    ${depthCategoryExpression("e")} AS depth_category,
+    COUNT(*) AS event_count
+  FROM earthquakes e
+  WHERE e.tsunami = 1
+  ${biFilterWhere("e")}
+  GROUP BY depth_category
+) d
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("depth_category", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Tsunami alert distribution", "bar", `
+SELECT alert_level, event_count
+FROM (
+  SELECT
+    COALESCE(NULLIF(e.alert, ''), 'none') AS alert_level,
+    COUNT(*) AS event_count
+  FROM earthquakes e
+  WHERE e.tsunami = 1
+  ${biFilterWhere("e")}
+  GROUP BY COALESCE(NULLIF(e.alert, ''), 'none')
+  ORDER BY event_count DESC
+) d
+ORDER BY event_count DESC;
+`, { filters: true, visualizationSettings: vizBar("alert_level", "event_count") }),
+        await ensureCard(sessionId, databaseId, "Recent tsunami earthquakes", "table", `
+SELECT
+  e.time,
+  e.magnitude,
+  e.depth,
+  e.place,
+  e.alert
+FROM earthquakes e
+WHERE e.tsunami = 1
+${biFilterWhere("e")}
+ORDER BY e.time DESC
+LIMIT 100;
+`, { filters: true })
       ],
       positions: [
         { row: 0, col: 0, size_x: 6, size_y: 4 },
         { row: 0, col: 6, size_x: 6, size_y: 4 },
-        { row: 0, col: 12, size_x: 6, size_y: 4 },
-        { row: 0, col: 18, size_x: 6, size_y: 4 },
         { row: 4, col: 0, size_x: 12, size_y: 8 },
         { row: 4, col: 12, size_x: 12, size_y: 8 },
-        { row: 12, col: 0, size_x: 16, size_y: 8 },
-        { row: 12, col: 16, size_x: 8, size_y: 8 }
+        { row: 12, col: 0, size_x: 8, size_y: 6 },
+        { row: 12, col: 8, size_x: 8, size_y: 6 },
+        { row: 12, col: 16, size_x: 8, size_y: 6 },
+        { row: 18, col: 0, size_x: 24, size_y: 8 }
       ]
     }
   ];
@@ -785,16 +797,18 @@ async function ensureDashboard(sessionId, definition) {
 
   const desiredCardsById = new Map(definition.cards.map((card) => [card.id, card]));
   const existingDashcards = fullDashboard.dashcards || [];
-  const existingCardIds = new Set((fullDashboard.dashcards || []).map((dashcard) => dashcard.card_id).filter(Boolean));
+
+  const syncedDashcards = fullDashboard.dashcards || [];
+  const existingCardIds = new Set(syncedDashcards.map((dashcard) => dashcard.card_id).filter(Boolean));
   const missingCards = definition.cards.filter((card) => !existingCardIds.has(card.id));
-  const needsMappingSync = dashboardCardsNeedMappingSync(existingDashcards, desiredCardsById);
+  const needsMappingSync = dashboardCardsNeedMappingSync(syncedDashcards, desiredCardsById);
   if (!created && missingCards.length === 0 && !needsMappingSync) {
     console.log(`Dashboard already populated: ${definition.name} (#${dashboard.id})`);
     return;
   }
 
   await updateDashboardCards(sessionId, dashboard.id, {
-    existingDashcards: created ? [] : existingDashcards,
+    existingDashcards: created ? [] : syncedDashcards,
     desiredCardsById,
     tabs: fullDashboard.tabs || [],
     cards: created ? definition.cards : missingCards,
@@ -979,7 +993,7 @@ async function main() {
 
   const databaseId = await ensureDatabase(sessionId);
   await ensureDashboards(sessionId, databaseId);
-  console.log("Metabase local setup complete");
+  console.log("Metabase dashboard setup complete");
 }
 
 main().catch((error) => {
